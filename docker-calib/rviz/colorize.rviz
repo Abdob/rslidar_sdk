@@ -1,0 +1,88 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Reference Frame: rslidar
+      Plane: XY
+      Cell Size: 1
+      Line Style:
+        Value: Lines
+      Color: 160; 160; 160
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Colored Cloud
+      Topic:
+        Value: /colored_points
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Size (Pixels): 3
+      Size (m): 0.01
+      Style: Points
+      Color Transformer: RGB8
+      Channel Name: rgb
+      Decay Time: 0
+      Selectable: true
+      Use Fixed Frame: true
+      Enabled: true
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Raw Cloud
+      Topic:
+        Value: /rslidar_points
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Size (Pixels): 2
+      Size (m): 0.01
+      Style: Points
+      Color Transformer: Intensity
+      Channel Name: intensity
+      Decay Time: 0
+      Selectable: true
+      Use Fixed Frame: true
+      Enabled: false
+    - Class: rviz_default_plugins/Image
+      Name: Camera
+      Topic:
+        Value: /image_raw
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Enabled: true
+  Global Options:
+    Background Color: 30; 30; 30
+    Fixed Frame: rslidar
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 10
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Pitch: 0.7
+      Target Frame: <Fixed Frame>
+      Yaw: 0
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 900
+  Width: 1600
+  Hide Left Dock: false
+  Hide Right Dock: false
+  QMainWindow State: 000000ff00000000fd0000000400000000000001f6

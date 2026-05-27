@@ -1,0 +1,58 @@
+# FAST-Calib target geometry
+# https://github.com/hku-mars/FAST-Calib
+#
+# Board coordinate frame (right-handed):
+#   origin = bottom-left corner of the board (front face)
+#   +X     = right along the board
+#   +Y     = up along the board
+#   +Z     = out of the board (toward the viewer)
+#
+# IMPORTANT: measure your actual board and update these values. The defaults
+# below match a 60 x 80 cm board with 8 cm holes and 12 cm ArUco markers.
+#
+# Units: meters.
+
+board:
+  width:     0.60
+  height:    0.80
+  thickness: 0.005
+
+aruco:
+  # OpenCV ArUco dictionary name. Common choices:
+  #   DICT_4X4_50, DICT_5X5_100, DICT_6X6_250, DICT_APRILTAG_36h11
+  dict: DICT_5X5_100
+  marker_size: 0.12       # side length of each printed marker (m)
+  # Marker centers in board frame. List in any order; ID is what matters.
+  markers:
+    - id: 0
+      center: [0.080, 0.080]   # bottom-left corner of the board
+    - id: 1
+      center: [0.520, 0.080]   # bottom-right
+    - id: 2
+      center: [0.080, 0.720]   # top-left
+    - id: 3
+      center: [0.520, 0.720]   # top-right
+
+# Hole centers in board frame. The LiDAR detects these as low-density regions
+# on the board plane (no returns through a hole). Diameter is used to size the
+# 2D search kernel during detection.
+holes:
+  diameter: 0.08
+  centers:
+    - [0.20, 0.25]
+    - [0.40, 0.25]
+    - [0.20, 0.55]
+    - [0.40, 0.55]
+
+# LiDAR-side detection knobs (used by calibrate_extrinsic.py).
+lidar_detect:
+  # Crop the cloud to a coarse front-of-LiDAR box before plane fitting.
+  # Adjust to where you place the board.
+  crop_xyz_min: [ 0.5, -1.0, -0.5]
+  crop_xyz_max: [ 4.0,  1.0,  1.5]
+  plane_ransac_distance: 0.02   # m, plane inlier threshold
+  plane_min_inliers: 1500
+  accumulate_frames: 10         # stack N consecutive frames for density
+  hole_density_threshold: 0.35  # cell occupancy below this is a hole candidate
+  cluster_eps: 0.04             # m, DBSCAN epsilon
+  cluster_min_samples: 4
