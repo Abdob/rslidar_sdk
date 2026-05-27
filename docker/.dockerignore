@@ -1,0 +1,6 @@
+**/build/
+**/.git/
+**/*.pcap
+doc/
+img/
+node_modules/

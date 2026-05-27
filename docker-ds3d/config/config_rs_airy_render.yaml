@@ -1,0 +1,56 @@
+%YAML 1.2
+# Ds3D render-only pipeline:
+#   RoboSense AIRY (live UDP)  →  libnvds_rs_lidar_dataloader.so
+#                              →  libnvds_3d_gl_datarender.so  (OpenGL window)
+---
+name: rs_airy_source
+type: ds3d::dataloader
+out_caps: ds3d/datamap
+custom_lib_path: libnvds_rs_lidar_dataloader.so
+custom_create_function: createRsLidarLoader
+config_body:
+  lidar_type: RSAIRY
+  msop_port: 6699
+  difop_port: 7788
+  imu_port: 0
+  host_address: 0.0.0.0
+  min_distance: 0.2
+  max_distance: 200.0
+  use_lidar_clock: true
+  dense_points: false
+
+  mem_type: gpu          # cpu | gpu
+  gpu_id: 0
+  max_points: 102400     # AIRY frames are ~86k; round up
+  fixed_points_num: false
+  mem_pool_size: 4
+  output_datamap_key: DS3D::LidarXYZI
+  source_id: 0
+  queue_timeout_ms: 5000
+---
+name: rs_airy_render
+type: ds3d::datarender
+in_caps: ds3d/datamap
+custom_lib_path: libnvds_3d_gl_datarender.so
+custom_create_function: createLidarDataRender
+gst_properties:
+  sync: false           # live source; don't gate on PTS
+  async: false
+  drop: false
+config_body:
+  title: RoboSense AIRY (live)
+  streams: [lidardata]
+  width: 1280
+  height: 720
+  block: true
+  # Camera placed 60 m above origin, looking down — top-down view.
+  view_position: [0, 0, 60]
+  view_target:   [0, 0, 0]
+  view_up:       [0, 1, 0]
+  near: 0.3
+  far:  200
+  fov:  60
+  lidar_color: [0, 255, 0]
+  lidar_data_key: DS3D::LidarXYZI
+  element_size: 4
+  enable_label: false

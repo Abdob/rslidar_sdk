@@ -1,0 +1,21 @@
+%YAML 1.2
+# Dataloader only — app falls back to fakesink. Used to verify the source path
+# works independently of the GL renderer.
+---
+name: rs_airy_source
+type: ds3d::dataloader
+out_caps: ds3d/datamap
+custom_lib_path: libnvds_rs_lidar_dataloader.so
+custom_create_function: createRsLidarLoader
+config_body:
+  lidar_type: RSAIRY
+  msop_port: 6699
+  difop_port: 7788
+  imu_port: 0
+  mem_type: cpu          # avoid CUDA path for first test
+  max_points: 102400
+  fixed_points_num: false
+  mem_pool_size: 4
+  output_datamap_key: DS3D::LidarXYZI
+  source_id: 0
+  queue_timeout_ms: 5000
