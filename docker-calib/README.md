@@ -116,13 +116,44 @@ Procedure:
    - Brute-forces all 24 permutations of LiDAR-to-camera hole pairings,
      keeps the one with the smallest Kabsch residual.
 3. Inspect:
-   - The **camera** window shows ArUco overlays plus green circles where
-     the solver thinks the holes project — they should land on the actual
-     holes.
-   - The **lidar dbg** window shows three panels: density, board-interior
-     mask, hole mask. Red crosses are the detected hole centers; they
-     should sit cleanly in 4 dark spots.
-   - RMS should land under ~10 mm for a well-calibrated rig.
+   - **Camera window.** ArUco IDs overlaid on each marker, plus a yellow
+     board outline and 4 green circles where the solver thinks the holes
+     project. The green circles must sit inside the actual physical holes
+     — if they're off, the camera intrinsics or marker IDs are wrong, not
+     the LiDAR side.
+   - **lidar dbg window.** One panel showing the LiDAR points after they've
+     been cropped and projected onto the RANSAC plane:
+     - **Gray dots** — all plane inliers (the board's surface points).
+     - **Red dots** — boundary points (points whose neighbors leave a
+       >120° angular gap; these cluster at hole edges and the board's
+       outer edge).
+     - **Yellow rings** — every cluster that fit a circle of roughly the
+       expected hole radius.
+     - **Green rings + crosses** — the 4 candidates the geometric-
+       consistency check kept (their pairwise distances best match the
+       expected hole rectangle).
+   - **Status line** at the top of the dbg panel: `plane=N  boundary=N
+     candidates=N  selected=N`. A healthy capture has:
+     - `plane` in the thousands (board points after crop).
+     - `boundary` 100–600 (mostly the four hole edges + the outer edge).
+     - `candidates` 4–8 (real holes + a couple of scan-ring artifacts).
+     - `selected = 4`.
+     If anything is 0, the failure stage is right there.
+   - **Terminal log:**
+     ```
+     solved: rms=24.86mm  perm=(3,0,2,1)
+             trans=[-0.001 -0.097 -0.044]
+             euler_xyz_deg=(0.41,-1.28,88.61)
+     ```
+     Sanity checks:
+     - **RMS** under ~30 mm is good, 30–60 mm is usable, > 60 mm means
+       something's drifting (re-tune or recapture).
+     - **`trans[1]`** should roughly match your measured LiDAR↔camera
+       vertical offset (here ~10 cm → -0.10 m in the camera frame).
+     - **`trans[2]`** should be a few cm at most. If it lands near ±1 m,
+       the brute-force Kabsch landed on the **180° mirror** of the true
+       solution (the hole rectangle has that symmetry). Re-capture — most
+       runs will pick the correct side. Save only when this looks right.
 4. Press `s` to save. Writes `config/extrinsic.yaml`.
 
 Move the board to 2–3 different positions and re-solve to check consistency.
