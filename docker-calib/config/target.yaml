@@ -7,52 +7,58 @@
 #   +Y     = up along the board
 #   +Z     = out of the board (toward the viewer)
 #
-# IMPORTANT: measure your actual board and update these values. The defaults
-# below match a 60 x 80 cm board with 8 cm holes and 12 cm ArUco markers.
+# Physical board: 1.4 m x 1.0 m, 1/4" plywood, four Ø240 mm holes and four
+# 200 mm ArUco markers (50 mm border to the board edges).
 #
 # Units: meters.
 
 board:
-  width:     0.60
-  height:    0.80
-  thickness: 0.005
+  width:     1.40
+  height:    1.00
+  thickness: 0.00635   # 1/4 inch
 
 aruco:
-  # OpenCV ArUco dictionary name. Common choices:
-  #   DICT_4X4_50, DICT_5X5_100, DICT_6X6_250, DICT_APRILTAG_36h11
-  dict: DICT_5X5_100
-  marker_size: 0.12       # side length of each printed marker (m)
-  # Marker centers in board frame. List in any order; ID is what matters.
+  # 8x8 printed cells = 6x6 data bits + 1-cell black border, so use a 6x6 dict.
+  # Change the suffix if your markers were generated from a different dict size.
+  dict: DICT_6X6_250
+  marker_size: 0.20      # side length of each printed marker (m)
+  # Marker centers in board frame. Each marker sits 50 mm from the nearest two
+  # board edges, so its 0.20 m side is centered 0.15 m from those edges.
+  # IDs follow FAST-Calib's hard-coded layout (qr_detect.hpp: boardIds {1,2,4,3}):
+  #   ID 1 = top-left,  ID 2 = top-right,
+  #   ID 3 = bottom-left, ID 4 = bottom-right.
   markers:
-    - id: 0
-      center: [0.080, 0.080]   # bottom-left corner of the board
     - id: 1
-      center: [0.520, 0.080]   # bottom-right
+      center: [0.15, 0.85]   # top-left
     - id: 2
-      center: [0.080, 0.720]   # top-left
+      center: [1.25, 0.85]   # top-right
     - id: 3
-      center: [0.520, 0.720]   # top-right
+      center: [0.15, 0.15]   # bottom-left
+    - id: 4
+      center: [1.25, 0.15]   # bottom-right
 
 # Hole centers in board frame. The LiDAR detects these as low-density regions
 # on the board plane (no returns through a hole). Diameter is used to size the
 # 2D search kernel during detection.
+# Centers sit 0.45 m from the left/right edges and 0.30 m from the top/bottom
+# edges, giving 0.50 m horizontal and 0.40 m vertical spacing.
 holes:
-  diameter: 0.08
+  diameter: 0.24
   centers:
-    - [0.20, 0.25]
-    - [0.40, 0.25]
-    - [0.20, 0.55]
-    - [0.40, 0.55]
+    - [0.45, 0.30]
+    - [0.95, 0.30]
+    - [0.45, 0.70]
+    - [0.95, 0.70]
 
 # LiDAR-side detection knobs (used by calibrate_extrinsic.py).
 lidar_detect:
   # Crop the cloud to a coarse front-of-LiDAR box before plane fitting.
   # Adjust to where you place the board.
-  crop_xyz_min: [ 0.5, -1.0, -0.5]
-  crop_xyz_max: [ 4.0,  1.0,  1.5]
+  crop_xyz_min: [ 0.5, -1.5, -0.5]
+  crop_xyz_max: [ 5.0,  1.5,  2.0]
   plane_ransac_distance: 0.02   # m, plane inlier threshold
-  plane_min_inliers: 1500
+  plane_min_inliers: 4500       # ~3x the old value to match the ~3x board area
   accumulate_frames: 10         # stack N consecutive frames for density
   hole_density_threshold: 0.35  # cell occupancy below this is a hole candidate
-  cluster_eps: 0.04             # m, DBSCAN epsilon
+  cluster_eps: 0.08             # m, DBSCAN epsilon (~hole radius)
   cluster_min_samples: 4
