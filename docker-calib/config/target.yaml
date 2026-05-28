@@ -52,17 +52,23 @@ holes:
 
 # LiDAR-side detection knobs (used by calibrate_extrinsic.py).
 lidar_detect:
-  # Crop the cloud to a coarse box around the board in the LiDAR frame
-  # (+X forward, +Y left, +Z up). Board sits ~1.83 m (6 ft) forward of the
-  # LiDAR. The box is wider than the board on every axis so it tolerates
-  # placement/tilt variation; tighten if walls or floor are leaking in.
-  crop_xyz_min: [ 1.0, -1.0, -1.0]
-  crop_xyz_max: [ 2.6,  1.0,  1.5]
+  # RSAIRY frame (measured from clicks on the cloud):
+  #   +Z = forward     (board center at Z = 2.68)
+  #   +X = down        (board top  X = -0.55, board center X = -0.11,
+  #                     so board bottom X ~= +0.39; floor X = +1.0)
+  #   +Y = lateral     (board essentially centered at Y = 0)
+  # X_max stays below the floor at +1.0 with ~0.4 m clearance.
+  # X_min stays above the board top at -0.6 with ~0.2 m slack.
+  # lidar 1 meter from board expect permutation (3,0,2,1)
+  crop_xyz_min: [-0.8, -0.9, 0.9]
+  crop_xyz_max: [ 0.6,  0.9, 1.1]
   plane_ransac_distance: 0.02   # m, plane inlier threshold
-  plane_min_inliers: 4500       # board is large and close -> lots of returns; safe floor
-  accumulate_frames: 10         # stack N consecutive frames for density
-  hole_density_threshold: 0.35  # cell occupancy below mean*this is a hole candidate
-  # cluster_eps / cluster_min_samples are loaded but not currently used by the
-  # extrinsic script (it does connected components on the hole mask instead).
+  plane_min_inliers: 2000       # ~1/2.5 the close-range value: returns scale ~1/r^2
+  accumulate_frames: 30         # stack N consecutive frames for density
+  # NOTE: hole_density_threshold / cluster_eps / cluster_min_samples are leftovers
+  # from the old density-grid detector. The current detector uses the FAST-Calib
+  # boundary-point + circle-fit method with parameters hard-coded in
+  # calibrate_extrinsic.py (boundary_radius, eps, min_samples).
+  hole_density_threshold: 0.35
   cluster_eps: 0.08
   cluster_min_samples: 4

@@ -36,6 +36,7 @@ import yaml
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
+from scipy.spatial import cKDTree
 from sensor_msgs.msg import Image, PointCloud2
 from sensor_msgs_py import point_cloud2 as pc2
 
@@ -74,7 +75,7 @@ def rotmat_to_euler_xyz(R: np.ndarray):
         x = np.degrees(np.arctan2(R[2, 1], R[2, 2]))
         y = np.degrees(np.arctan2(-R[2, 0], sy))
         z = np.degrees(np.arctan2(R[1, 0], R[0, 0]))
-    return x, y, z
+    return float(x), float(y), float(z)
 
 
 # ---------- target geometry ----------
@@ -228,8 +229,20 @@ class LidarDetector:
         self.target = target
 
     def detect(self, points: np.ndarray):
-        """Return (holes_lidar (4,3), debug_image_bgr) or (None, debug_image_bgr)."""
-        # 1. Crop to a coarse box where the board lives.
+        """Return (holes_lidar (4,3), debug_image_bgr) or (None, debug_image_bgr).
+
+        Algorithm follows FAST-Calib (lidar_detect.hpp::detect_solid_lidar):
+          1. Crop, RANSAC plane, project to 2D in the plane.
+          2. Boundary-point extraction: a point is on a boundary if its
+             neighbors within `boundary_radius` leave an angular gap > pi/4
+             (i.e. one side is empty -> hole edge or board outer edge).
+          3. Euclidean-cluster the boundary points.
+          4. Fit a 2D circle to each cluster; keep only those whose radius
+             matches the expected hole radius and whose fit error is small.
+          5. Among candidate circles, find the 4 whose pairwise distances
+             match the expected hole rectangle (2 sides + 2 short + 2 diag).
+        """
+        # 1. Crop.
         mask = np.all((points >= self.target.crop_min) & (points <= self.target.crop_max), axis=1)
         cropped = points[mask]
         if len(cropped) < self.target.plane_min_inliers:
@@ -240,67 +253,77 @@ class LidarDetector:
         if plane is None or len(inliers) < self.target.plane_min_inliers:
             n = 0 if inliers is None else len(inliers)
             return None, _placeholder_image(f"plane inliers: {n}")
-        a, b, c, d = plane
-        normal = np.array([a, b, c]) / np.linalg.norm([a, b, c])
+        normal = np.array(plane[:3])
+        normal /= np.linalg.norm(normal)
         plane_pts = cropped[inliers]
 
-        # 3. 2D in-plane coords (u,v).
+        # 3. 2D in-plane coords (u, v).
         u_axis, v_axis = _orthonormal_basis(normal)
         origin = plane_pts.mean(0)
         rel = plane_pts - origin
-        u = rel @ u_axis
-        v = rel @ v_axis
+        pts_2d_full = np.column_stack([rel @ u_axis, rel @ v_axis]).astype(np.float64)
+        # Voxel-downsample in 2D so the density becomes uniform (instead of
+        # following the LiDAR's scan-ring pattern). 1.5 cm cells keep enough
+        # detail to fit 24 cm hole circles while flattening intra-ring density.
+        pts_2d = _voxel_downsample_2d(pts_2d_full, leaf=0.015)
 
-        # 4. Rasterize to a density image. Cell size = hole_diameter / 4.
-        cell = self.target.hole_diameter / 4.0
-        u_min, u_max = u.min(), u.max()
-        v_min, v_max = v.min(), v.max()
-        W = max(int(np.ceil((u_max - u_min) / cell)), 8)
-        H = max(int(np.ceil((v_max - v_min) / cell)), 8)
-        density = np.zeros((H, W), dtype=np.float32)
-        iu = np.clip(((u - u_min) / cell).astype(int), 0, W - 1)
-        iv = np.clip(((v_max - v) / cell).astype(int), 0, H - 1)
-        np.add.at(density, (iv, iu), 1.0)
+        # 4. Boundary points.
+        # The RSAIRY's scan pattern forms a sparse 2D lattice (rings spaced
+        # several cm apart on the board's plane). Even an interior point has
+        # gaps of ~60° between lattice neighbors, so the FAST-Calib default
+        # threshold of π/4 (45°) flags everything. We need a stricter threshold:
+        # only points whose neighborhood is *missing* a half-plane should count
+        # (hole edge, board outer edge). 2π/3 ~= 120° works in practice — bigger
+        # than any lattice gap, smaller than the ~180° you get at a real edge.
+        boundary_radius = max(0.10, self.target.hole_diameter * 0.5)
+        boundary_mask = _detect_boundary_points(
+            pts_2d, radius=boundary_radius, angle_thr=2 * np.pi / 3)
+        boundary_pts = pts_2d[boundary_mask]
+        if len(boundary_pts) < 20:
+            return None, _build_dbg_image(
+                pts_2d, boundary_pts, [], None,
+                msg=f"only {len(boundary_pts)} boundary pts")
 
-        # 5. Smooth, then find low-density spots inside the board interior.
-        # We erode the high-density mask so hole candidates on the board's edge
-        # are excluded.
-        density_blur = cv2.GaussianBlur(density, (5, 5), 0)
-        plane_mask = (density_blur > 0).astype(np.uint8)
-        plane_mask = cv2.morphologyEx(plane_mask, cv2.MORPH_CLOSE,
-                                       np.ones((3, 3), np.uint8), iterations=2)
-        interior = cv2.erode(plane_mask, np.ones((5, 5), np.uint8), iterations=2)
+        # 5. Euclidean cluster the boundary points.
+        clusters = _euclidean_cluster_2d(boundary_pts, eps=0.06, min_samples=5)
 
-        # 6. Hole mask: interior AND density < threshold * local-mean.
-        mean_density = density_blur[interior > 0].mean() if (interior > 0).any() else 0.0
-        thr = mean_density * self.target.hole_density_thr
-        hole_mask = ((density_blur < thr) & (interior > 0)).astype(np.uint8) * 255
+        # 6. Fit a circle to each cluster; keep ones matching the expected hole.
+        expected_r = self.target.hole_diameter / 2.0
+        candidates = []     # list of (cx, cy, r, mean_err, cluster_pts)
+        for cluster in clusters:
+            cx, cy, r, err = _fit_circle_2d(cluster)
+            if r is None:
+                continue
+            # Loose-ish radius tolerance: ±30% of expected radius.
+            if abs(r - expected_r) > expected_r * 0.3:
+                continue
+            # Fit error: mean radial residual must be < ~hole radius / 6.
+            if err > expected_r / 6.0:
+                continue
+            candidates.append((cx, cy, r, err, cluster))
 
-        # 7. Connected components → take the 4 largest.
-        num, labels, stats, centroids = cv2.connectedComponentsWithStats(hole_mask, connectivity=8)
-        if num <= 1:
-            return None, _debug_image(density_blur, interior, hole_mask, centroids[1:], cell)
-        # stats[0] is the background.
-        areas = stats[1:, cv2.CC_STAT_AREA]
-        order = np.argsort(areas)[::-1] + 1   # +1 to skip background label 0
-        chosen = order[:4]
-        if len(chosen) < 4:
-            return None, _debug_image(density_blur, interior, hole_mask,
-                                      centroids[chosen] if len(chosen) else np.empty((0, 2)),
-                                      cell)
-        hole_centers_uv = centroids[chosen]   # in (u_idx, v_idx) — i.e., (col, row)
+        if len(candidates) < 4:
+            return None, _build_dbg_image(
+                pts_2d, boundary_pts, candidates, None,
+                msg=f"only {len(candidates)} circle candidates")
+
+        # 7. Pick the 4 whose pairwise distances best match the expected pattern.
+        # Tolerance is loose because LiDAR scan-ring sparsity often biases the
+        # circle fit by a few cm (boundary points cluster on one arc).
+        expected_dists = _expected_pairwise_distances(self.target.holes_board)
+        best, score = _find_best_4_holes(candidates, expected_dists, tol=0.15)
+        if best is None:
+            return None, _build_dbg_image(
+                pts_2d, boundary_pts, candidates, None,
+                msg=f"no 4-tuple fit (best mismatch {score*1000:.0f} mm)")
 
         # 8. Lift back to 3D LiDAR frame.
-        holes_3d = []
-        for cu, cv_ in hole_centers_uv:
-            u_m = u_min + cu * cell
-            v_m = v_max - cv_ * cell
-            p = origin + u_m * u_axis + v_m * v_axis
-            holes_3d.append(p)
-        holes_3d = np.array(holes_3d)
-
-        # Debug image with hole centers drawn.
-        dbg = _debug_image(density_blur, interior, hole_mask, hole_centers_uv, cell)
+        holes_3d = np.array([
+            origin + cx * u_axis + cy * v_axis for (cx, cy, _r, _e, _c) in best
+        ])
+        dbg = _build_dbg_image(
+            pts_2d, boundary_pts, candidates, best,
+            msg=f"OK  mismatch={score*1000:.0f} mm")
         return holes_3d, dbg
 
 
@@ -334,7 +357,9 @@ def _ransac_plane(points: np.ndarray, dist_thr: float, max_iter: int = 200):
     # Refit: least-squares plane from inliers.
     P = points[best_inliers]
     centroid = P.mean(0)
-    _, _, Vt = np.linalg.svd(P - centroid)
+    # full_matrices=False so U stays (N,3) — otherwise it's (N,N) and explodes
+    # for large inlier counts (e.g. 100k pts -> 80 GiB U matrix).
+    _, _, Vt = np.linalg.svd(P - centroid, full_matrices=False)
     normal = Vt[-1]
     d = -normal.dot(centroid)
     dists = np.abs(points @ normal + d)
@@ -358,23 +383,188 @@ def _placeholder_image(msg: str):
     return img
 
 
-def _debug_image(density, interior, hole_mask, centers_uv, cell):
-    # Stack [density|interior|hole_mask] as a single BGR image.
-    d = (density / max(density.max(), 1.0) * 255).astype(np.uint8)
-    d = cv2.applyColorMap(d, cv2.COLORMAP_VIRIDIS)
-    inter = cv2.cvtColor(interior * 255, cv2.COLOR_GRAY2BGR)
-    holes = cv2.cvtColor(hole_mask, cv2.COLOR_GRAY2BGR)
-    # Mark the centers on the density panel.
-    for c in centers_uv:
-        cu, cv_ = int(round(c[0])), int(round(c[1]))
-        cv2.drawMarker(d, (cu, cv_), (0, 0, 255), cv2.MARKER_CROSS, 14, 2)
-        cv2.circle(d, (cu, cv_), int(round(0.04 / cell)), (0, 255, 255), 1)
-    panel = np.hstack([d, inter, holes])
-    # Upscale for readability.
-    scale = max(1, 400 // panel.shape[0])
-    panel = cv2.resize(panel, (panel.shape[1] * scale, panel.shape[0] * scale),
-                       interpolation=cv2.INTER_NEAREST)
-    return panel
+def _voxel_downsample_2d(pts: np.ndarray, leaf: float) -> np.ndarray:
+    """Keep one point per `leaf`-sized 2D cell. Order is deterministic."""
+    if len(pts) == 0:
+        return pts
+    keys = np.floor(pts / leaf).astype(np.int64)
+    # Pack 2D integer grid keys into 1D for unique-detection.
+    packed = keys[:, 0] * 2_000_003 + keys[:, 1]
+    _, idx = np.unique(packed, return_index=True)
+    return pts[np.sort(idx)]
+
+
+def _detect_boundary_points(pts_2d: np.ndarray, radius: float, angle_thr: float):
+    """For each point, decide if it sits on a boundary.
+
+    A point is a boundary point if, looking at its neighbors within `radius`,
+    the largest angular gap (around the point, in 2D) exceeds `angle_thr`.
+    That's the FAST-Calib criterion (and PCL's BoundaryEstimation).
+    """
+    tree = cKDTree(pts_2d)
+    indices_list = tree.query_ball_point(pts_2d, r=radius)
+    boundary = np.zeros(len(pts_2d), dtype=bool)
+    for i, nbrs in enumerate(indices_list):
+        if len(nbrs) < 4:
+            continue
+        diffs = pts_2d[nbrs] - pts_2d[i]
+        mag = np.hypot(diffs[:, 0], diffs[:, 1])
+        sel = mag > 1e-6           # drop self
+        if sel.sum() < 3:
+            continue
+        angles = np.sort(np.arctan2(diffs[sel, 1], diffs[sel, 0]))
+        gaps = np.diff(angles)
+        wrap = 2 * np.pi + angles[0] - angles[-1]
+        if max(gaps.max() if len(gaps) else 0.0, wrap) > angle_thr:
+            boundary[i] = True
+    return boundary
+
+
+def _euclidean_cluster_2d(pts: np.ndarray, eps: float, min_samples: int):
+    """BFS-based Euclidean clustering. Returns a list of (M_i, 2) arrays."""
+    if len(pts) == 0:
+        return []
+    tree = cKDTree(pts)
+    visited = np.zeros(len(pts), dtype=bool)
+    clusters = []
+    for seed in range(len(pts)):
+        if visited[seed]:
+            continue
+        stack = [seed]
+        members = []
+        while stack:
+            j = stack.pop()
+            if visited[j]:
+                continue
+            visited[j] = True
+            members.append(j)
+            for k in tree.query_ball_point(pts[j], r=eps):
+                if not visited[k]:
+                    stack.append(k)
+        if len(members) >= min_samples:
+            clusters.append(pts[members])
+    return clusters
+
+
+def _fit_circle_2d(pts: np.ndarray):
+    """Algebraic (Kåsa) least-squares 2D circle fit.
+
+    Returns (cx, cy, r, mean_radial_error) or (None, None, None, None).
+    """
+    if len(pts) < 3:
+        return None, None, None, None
+    x = pts[:, 0]; y = pts[:, 1]
+    # x^2 + y^2 + A x + B y + C = 0  =>  A x + B y + C = -(x^2 + y^2)
+    M = np.column_stack([x, y, np.ones_like(x)])
+    b = -(x * x + y * y)
+    try:
+        sol, *_ = np.linalg.lstsq(M, b, rcond=None)
+    except np.linalg.LinAlgError:
+        return None, None, None, None
+    A_, B_, C_ = sol
+    cx = -A_ / 2.0
+    cy = -B_ / 2.0
+    r2 = cx * cx + cy * cy - C_
+    if r2 <= 0:
+        return None, None, None, None
+    r = float(np.sqrt(r2))
+    err = float(np.mean(np.abs(np.hypot(x - cx, y - cy) - r)))
+    return float(cx), float(cy), r, err
+
+
+def _expected_pairwise_distances(holes_board: np.ndarray):
+    """Sorted pairwise distances among the 4 hole centers, in board frame."""
+    n = len(holes_board)
+    dists = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            dists.append(np.linalg.norm(holes_board[i] - holes_board[j]))
+    return np.sort(np.array(dists))
+
+
+def _find_best_4_holes(candidates, expected_dists, tol: float):
+    """Find the 4 candidate circles whose pairwise distances best match
+    the target's hole-rectangle pattern. Returns (best_4, max_mismatch_m)
+    or (None, None) if no 4-tuple is within `tol`."""
+    import itertools
+    n = len(candidates)
+    if n < 4:
+        return None, None
+    expected = np.sort(np.asarray(expected_dists))
+    best = None
+    best_score = float("inf")
+    for combo in itertools.combinations(range(n), 4):
+        pts = np.array([(candidates[i][0], candidates[i][1]) for i in combo])
+        d = []
+        for i in range(4):
+            for j in range(i + 1, 4):
+                d.append(np.hypot(pts[i, 0] - pts[j, 0], pts[i, 1] - pts[j, 1]))
+        d = np.sort(np.array(d))
+        score = float(np.max(np.abs(d - expected)))
+        if score < best_score:
+            best_score = score
+            best = [candidates[i] for i in combo]
+    if best_score > tol:
+        return None, best_score
+    return best, best_score
+
+
+def _build_dbg_image(pts_2d, boundary_pts, candidates, selected, msg: str = ""):
+    """Render a 2D scatter of the in-plane points with boundary/candidates/selected."""
+    if len(pts_2d) == 0:
+        return _placeholder_image("no plane points")
+    pad = 0.10
+    u_min = pts_2d[:, 0].min() - pad
+    u_max = pts_2d[:, 0].max() + pad
+    v_min = pts_2d[:, 1].min() - pad
+    v_max = pts_2d[:, 1].max() + pad
+    # 250 px/m => 4 mm/px. Cap so the window doesn't get crazy big.
+    ppm = 250.0
+    W = min(int((u_max - u_min) * ppm), 1800)
+    H = min(int((v_max - v_min) * ppm), 1000)
+    if W < 100 or H < 100:
+        return _placeholder_image("plane extent too small")
+    img = np.zeros((H, W, 3), dtype=np.uint8)
+
+    def to_px(p):
+        x = int((p[0] - u_min) * ppm)
+        y = H - 1 - int((p[1] - v_min) * ppm)
+        return x, y
+
+    # All plane points (dim).
+    pix = ((pts_2d - [u_min, v_min]) * ppm).astype(int)
+    pix[:, 1] = H - 1 - pix[:, 1]
+    inb = (pix[:, 0] >= 0) & (pix[:, 0] < W) & (pix[:, 1] >= 0) & (pix[:, 1] < H)
+    img[pix[inb, 1], pix[inb, 0]] = (90, 90, 90)
+
+    # Boundary points (red).
+    if len(boundary_pts):
+        bpix = ((boundary_pts - [u_min, v_min]) * ppm).astype(int)
+        bpix[:, 1] = H - 1 - bpix[:, 1]
+        inb = (bpix[:, 0] >= 0) & (bpix[:, 0] < W) & (bpix[:, 1] >= 0) & (bpix[:, 1] < H)
+        for x, y in bpix[inb]:
+            cv2.circle(img, (int(x), int(y)), 1, (0, 0, 255), -1)
+
+    # All candidate circles (yellow rings).
+    for (cx, cy, r, _err, _c) in candidates:
+        c = to_px((cx, cy))
+        cv2.circle(img, c, int(r * ppm), (0, 200, 200), 1, cv2.LINE_AA)
+
+    # Selected 4 (bright green rings + center cross).
+    if selected is not None:
+        for (cx, cy, r, _err, _c) in selected:
+            c = to_px((cx, cy))
+            cv2.circle(img, c, int(r * ppm), (0, 255, 0), 2, cv2.LINE_AA)
+            cv2.drawMarker(img, c, (0, 255, 0), cv2.MARKER_CROSS, 18, 2)
+
+    # Status text.
+    label = (f"plane={len(pts_2d)}  boundary={len(boundary_pts)}  "
+             f"candidates={len(candidates)}  selected={4 if selected else 0}")
+    if msg:
+        label += f"   [{msg}]"
+    cv2.putText(img, label, (10, 22),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+    return img
 
 
 # ---------- main ROS node ----------
@@ -440,12 +630,21 @@ class ExtrinsicCalibrator(Node):
         cloud = np.vstack(clouds)
         holes_lidar, lidar_dbg = self.lidar_det.detect(cloud)
 
+        # Show debug images even on failure so the user can see *why* it failed.
+        self.last_result = {
+            "R": None, "t": None, "rms": float("inf"), "perm": None,
+            "holes_cam": holes_cam, "holes_lidar_ordered": None,
+            "cam_overlay": cam_overlay, "lidar_dbg": lidar_dbg,
+        }
+
         if holes_cam is None:
             self.get_logger().error("camera: failed to recover board pose "
                                     "(need >=2 known ArUco IDs detected)")
             return
         if holes_lidar is None or len(holes_lidar) < 4:
-            self.get_logger().error("LiDAR: failed to extract 4 hole centers")
+            self.get_logger().error("LiDAR: failed to extract 4 hole centers "
+                                    "(check the dbg window — likely RANSAC picked "
+                                    "a wall/floor; tighten crop_xyz_min/max)")
             return
 
         # Brute-force the best permutation (24).
@@ -468,8 +667,8 @@ class ExtrinsicCalibrator(Node):
         }
 
     def save(self):
-        if self.last_result is None:
-            self.get_logger().error("nothing to save — capture & solve first")
+        if self.last_result is None or self.last_result["R"] is None:
+            self.get_logger().error("nothing valid to save — last capture didn't solve")
             return
         R = self.last_result["R"]; t = self.last_result["t"]
         T = np.eye(4); T[:3, :3] = R; T[:3, 3] = t
@@ -498,9 +697,14 @@ class ExtrinsicCalibrator(Node):
             cv2.putText(img, "c=capture/solve  s=save  r=reset  q=quit",
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             if self.last_result is not None:
-                cv2.putText(img,
-                            f"last RMS = {self.last_result['rms']*1000:.2f} mm",
-                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
+                if self.last_result["R"] is None:
+                    msg = "last capture: FAILED (see lidar dbg)"
+                    color = (0, 0, 255)
+                else:
+                    msg = f"last RMS = {self.last_result['rms']*1000:.2f} mm"
+                    color = (0, 200, 255)
+                cv2.putText(img, msg, (10, 60),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
                 # Show the camera overlay with detected holes as the camera panel.
                 cv2.imshow("camera", self.last_result["cam_overlay"])
                 cv2.imshow("lidar dbg", self.last_result["lidar_dbg"])
