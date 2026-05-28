@@ -53,6 +53,7 @@ exec docker run --rm -it \
     -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
     -v /dev:/dev \
     -v "$HOST_DIR/config":/opt/calib/config:rw \
+    -v "$HOST_DIR/config/lidar_config.yaml":/opt/ros_ws/src/rslidar_sdk/config/config.yaml:ro \
     -v "$HOST_DIR/scripts":/opt/calib/scripts:ro \
     -v "$HOST_DIR/launch":/opt/calib/launch:ro \
     -v "$HOST_DIR/rviz":/opt/calib/rviz:ro \

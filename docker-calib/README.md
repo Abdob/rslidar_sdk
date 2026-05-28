@@ -49,6 +49,98 @@ Tags `rslidar-airy-calib`. Base is `osrf/ros:humble-desktop` with `usb_cam`,
 directory, so editing YAML or Python and rerunning takes effect without a
 rebuild.
 
+## Sanity-check sensor data (do this before anything else)
+
+After starting `sensors`, verify each stream is publishing at the expected
+rate.
+
+### Why you have to source ROS inside `docker exec`
+
+The container's `ENTRYPOINT` ([Dockerfile](Dockerfile#L65)) sources ROS
+and the workspace automatically — but only for the *initial* command
+(`bash`, the launch you started). `docker exec` attaches a **fresh shell**
+that bypasses the entrypoint, so `ros2` isn't on the PATH. You have two
+choices:
+
+**(a) One-time source then run commands** — open one interactive exec
+shell and source once:
+```
+docker exec -it rslidar-airy-calib bash
+source /opt/ros/humble/setup.bash
+source /opt/ros_ws/install/setup.bash
+ros2 topic hz /rslidar_points
+```
+
+**(b) Source inline per `docker exec`** — convenient for one-liners from
+the host:
+```
+docker exec rslidar-airy-calib bash -c \
+  'source /opt/ros/humble/setup.bash && source /opt/ros_ws/install/setup.bash && \
+   ros2 topic hz /rslidar_points'
+```
+
+For repeated use, defining a host-side function in your shell rc is the
+ergonomic version:
+```
+rosx() {
+  docker exec rslidar-airy-calib bash -c \
+    "source /opt/ros/humble/setup.bash && source /opt/ros_ws/install/setup.bash && $*"
+}
+# then:  rosx ros2 topic hz /rslidar_points
+```
+
+### The actual rate checks
+
+```
+# What's published right now?
+docker exec rslidar-airy-calib bash -c \
+  'source /opt/ros/humble/setup.bash && source /opt/ros_ws/install/setup.bash && \
+   ros2 topic list | grep -E "rslidar|image"'
+
+# Per-topic rates (5 s sample each)
+docker exec rslidar-airy-calib bash -c \
+  'source /opt/ros/humble/setup.bash && source /opt/ros_ws/install/setup.bash && \
+   timeout 5 ros2 topic hz /rslidar_points'
+
+docker exec rslidar-airy-calib bash -c \
+  'source /opt/ros/humble/setup.bash && source /opt/ros_ws/install/setup.bash && \
+   timeout 5 ros2 topic hz /rslidar_imu_data'
+
+docker exec rslidar-airy-calib bash -c \
+  'source /opt/ros/humble/setup.bash && source /opt/ros_ws/install/setup.bash && \
+   timeout 5 ros2 topic hz /image_raw'
+```
+
+Expected:
+
+| Topic               | Rate     | If missing / wrong                                          |
+|---------------------|----------|-------------------------------------------------------------|
+| `/rslidar_points`   | ~10 Hz   | Check LiDAR ethernet link + `msop_port`/`difop_port` config |
+| `/rslidar_imu_data` | ~200 Hz  | See "IMU not publishing" below                              |
+| `/image_raw`        | ~30 Hz   | USB bandwidth or `pixel_format` mismatch                    |
+
+### IMU not publishing — two distinct causes
+
+1. **Driver compiled without IMU support.** The startup log prints
+   `imu_port: 0` regardless of YAML config → the binary needs
+   `-DENABLE_IMU_DATA_PARSE=ON` at CMake time. Already set in the
+   [Dockerfile](Dockerfile#L52); if you suspect a stale image, rebuild:
+   ```
+   ./docker-calib/docker_build.sh
+   ```
+2. **LiDAR not sending IMU packets.** Driver log shows `imu_port: 6688`
+   but `ros2 topic hz` says "topic does not appear to be published yet".
+   Confirm with tcpdump:
+   ```
+   docker exec rslidar-airy-calib bash -c \
+     'apt-get -qq install -y tcpdump 2>/dev/null; timeout 5 tcpdump -i any -n udp port 6688 -c 5'
+   ```
+   - **0 packets** → enable IMU output via the LiDAR's web UI
+     (`http://<lidar_ip>`, default `192.168.1.200`). Set destination
+     port to 6688 and save.
+   - **Packets arriving** → driver-side parsing issue, check the AIRY
+     firmware version against the rslidar_sdk version.
+
 ## Stage 1 — Fisheye intrinsic calibration
 
 You need a real checkerboard (printed or laser-printed on rigid backing) and
