@@ -52,13 +52,17 @@ holes:
 
 # LiDAR-side detection knobs (used by calibrate_extrinsic.py).
 lidar_detect:
-  # Crop the cloud to a coarse front-of-LiDAR box before plane fitting.
-  # Adjust to where you place the board.
-  crop_xyz_min: [ 0.5, -1.5, -0.5]
-  crop_xyz_max: [ 5.0,  1.5,  2.0]
+  # Crop the cloud to a coarse box around the board in the LiDAR frame
+  # (+X forward, +Y left, +Z up). Board sits ~1.83 m (6 ft) forward of the
+  # LiDAR. The box is wider than the board on every axis so it tolerates
+  # placement/tilt variation; tighten if walls or floor are leaking in.
+  crop_xyz_min: [ 1.0, -1.0, -1.0]
+  crop_xyz_max: [ 2.6,  1.0,  1.5]
   plane_ransac_distance: 0.02   # m, plane inlier threshold
-  plane_min_inliers: 4500       # ~3x the old value to match the ~3x board area
+  plane_min_inliers: 4500       # board is large and close -> lots of returns; safe floor
   accumulate_frames: 10         # stack N consecutive frames for density
-  hole_density_threshold: 0.35  # cell occupancy below this is a hole candidate
-  cluster_eps: 0.08             # m, DBSCAN epsilon (~hole radius)
+  hole_density_threshold: 0.35  # cell occupancy below mean*this is a hole candidate
+  # cluster_eps / cluster_min_samples are loaded but not currently used by the
+  # extrinsic script (it does connected components on the hole mask instead).
+  cluster_eps: 0.08
   cluster_min_samples: 4
