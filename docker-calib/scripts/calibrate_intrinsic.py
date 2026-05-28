@@ -185,7 +185,7 @@ def main():
     ap.add_argument("--topic",  default="/image_raw")
     ap.add_argument("--cols",   type=int, default=9,  help="inner chessboard corners horizontally")
     ap.add_argument("--rows",   type=int, default=6,  help="inner chessboard corners vertically")
-    ap.add_argument("--square", type=float, default=0.025, help="chessboard square size in meters")
+    ap.add_argument("--square", type=float, default=0.14351, help="chessboard square size in meters")
     ap.add_argument("--out",    default="/opt/calib/config/intrinsics.yaml")
     args = ap.parse_args()
 

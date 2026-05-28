@@ -40,6 +40,7 @@ Tags `rslidar-airy-calib`. Base is `osrf/ros:humble-desktop` with `usb_cam`,
 ./docker-calib/docker_run.sh                    # shell inside /opt/calib
 ./docker-calib/docker_run.sh sensors            # AIRY + usb_cam only
 ./docker-calib/docker_run.sh intrinsic          # usb_cam + chessboard tool
+./docker-calib/docker_run.sh test-intrinsic
 ./docker-calib/docker_run.sh extrinsic          # AIRY + usb_cam + extrinsic tool
 ./docker-calib/docker_run.sh colorize           # everything + RViz2
 ```

@@ -4,6 +4,7 @@
 # Usage:
 #   ./docker_run.sh                            # interactive shell inside /opt/calib
 #   ./docker_run.sh intrinsic                  # ros2 launch calib/intrinsic
+#   ./docker_run.sh test-intrinsic             # ros2 launch calib/test_intrinsic
 #   ./docker_run.sh extrinsic                  # ros2 launch calib/extrinsic
 #   ./docker_run.sh colorize                   # ros2 launch calib/colorize
 #   ./docker_run.sh -- python3 …               # arbitrary command
@@ -21,6 +22,9 @@ ARGS=("$@")
 case "${1:-}" in
     intrinsic)
         ARGS=(ros2 launch /opt/calib/launch/intrinsic.launch.py)
+        ;;
+    test-intrinsic)
+        ARGS=(ros2 launch /opt/calib/launch/test_intrinsic.launch.py)
         ;;
     extrinsic)
         ARGS=(ros2 launch /opt/calib/launch/extrinsic.launch.py)
