@@ -39,12 +39,16 @@ RUN . /opt/ros/humble/setup.sh && \
     colcon build \
         --cmake-args \
             -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_IMU_DATA_PARSE=ON \
             -DCMAKE_CXX_FLAGS="-include memory -include functional"
 
-# Entry: source ROS + workspace, then exec launch (or whatever the caller passed)
+# Entry: source ROS + workspace, then exec launch (or whatever the caller passed).
+# Raise kernel UDP buffer so the AIRY at 10 Hz doesn't overflow the default
+# ~200 KB cap. Container is --net=host so this affects the host namespace.
 RUN printf '%s\n' \
     '#!/bin/bash' \
     'set -e' \
+    'sysctl -wq net.core.rmem_max=33554432 net.core.rmem_default=33554432 || true' \
     'source /opt/ros/humble/setup.bash' \
     'source /opt/ros_ws/install/setup.bash' \
     'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp' \

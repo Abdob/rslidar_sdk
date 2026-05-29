@@ -8,6 +8,7 @@ xhost +local:docker >/dev/null 2>&1 || true
 
 exec docker run --rm -it \
     --net=host \
+    --privileged \
     -e DISPLAY="${DISPLAY:-:0}" \
     -e XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}" \
     -e NVIDIA_DRIVER_CAPABILITIES=all \

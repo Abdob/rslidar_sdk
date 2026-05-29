@@ -2,7 +2,13 @@ FROM osrf/ros:humble-desktop
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Build deps + Python tooling. ros-humble-usb-cam brings v4l2 capture into ROS.
+# --- Stage 1: rslidar_sdk build environment (MATCHES docker-ros2 exactly) ---
+# Calibration-only packages and pip wheels go in stage 2. Keeping the rslidar
+# build environment minimal here is intentional — when this set drifted from
+# docker-ros2 (extra ros-humble-* packages pulling in different transitive
+# libs), the resulting rslidar_sdk binary published clouds at 7–8 Hz instead
+# of 10 Hz on the AIRY. Any change to this apt list should be mirrored in
+# docker-ros2/Dockerfile or moved to stage 2 below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
@@ -11,29 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libpcap-dev \
         libeigen3-dev \
         python3-colcon-common-extensions \
-        python3-pip \
-        python3-numpy \
-        python3-scipy \
-        python3-yaml \
         ros-humble-rmw-cyclonedds-cpp \
         ros-humble-pcl-conversions \
-        ros-humble-usb-cam \
-        ros-humble-image-transport \
-        ros-humble-cv-bridge \
-        ros-humble-tf-transformations \
     && rm -rf /var/lib/apt/lists/*
 
-# OpenCV with contrib (ArUco), Open3D. ROS 2 Humble's cv_bridge is compiled
-# against NumPy 1.x; opencv-contrib-python 4.10+ wheels are built against
-# NumPy 2.x and would auto-upgrade numpy, breaking cv_bridge. Pin opencv to
-# the last 4.8 series, which keeps numpy<2.
-RUN pip3 install --no-cache-dir \
-        "numpy<2" \
-        "opencv-contrib-python==4.8.1.78" \
-        "open3d>=0.18,<0.19" \
-        transforms3d
-
-# Colcon workspace: rslidar_msg + rslidar_sdk (live AIRY publisher).
+# Colcon workspace: rslidar_msg + rslidar_sdk.
 WORKDIR /opt/ros_ws/src
 RUN git clone --depth=1 https://github.com/RoboSense-LiDAR/rslidar_msg.git
 
@@ -53,6 +41,32 @@ RUN . /opt/ros/humble/setup.sh && \
             -DENABLE_IMU_DATA_PARSE=ON \
             -DCMAKE_CXX_FLAGS="-include memory -include functional"
 
+# --- Stage 2: calibration tooling (after binary is built) ---
+# Adding these earlier (especially ros-humble-cv-bridge / image-transport)
+# pulled different transitive deps into the rslidar_sdk link step and slowed
+# the published cloud rate. These are runtime-only for the calibration
+# Python scripts; they don't influence the already-built C++ binary.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3-pip \
+        python3-numpy \
+        python3-scipy \
+        python3-yaml \
+        ros-humble-usb-cam \
+        ros-humble-image-transport \
+        ros-humble-cv-bridge \
+        ros-humble-tf-transformations \
+    && rm -rf /var/lib/apt/lists/*
+
+# OpenCV with contrib (ArUco), Open3D. ROS 2 Humble's cv_bridge is compiled
+# against NumPy 1.x; opencv-contrib-python 4.10+ wheels are built against
+# NumPy 2.x and would auto-upgrade numpy, breaking cv_bridge. Pin opencv to
+# the last 4.8 series, which keeps numpy<2.
+RUN pip3 install --no-cache-dir \
+        "numpy<2" \
+        "opencv-contrib-python==4.8.1.78" \
+        "open3d>=0.18,<0.19" \
+        transforms3d
+
 # Calibration tools, launch files, and configs live in a bind-mountable dir so
 # the user can iterate without rebuilding the image.
 RUN mkdir -p /opt/calib
@@ -62,10 +76,14 @@ COPY docker-calib/scripts/ /opt/calib/scripts/
 COPY docker-calib/rviz/    /opt/calib/rviz/
 RUN chmod +x /opt/calib/scripts/*.py 2>/dev/null || true
 
-# Entrypoint: source ROS + workspace.
+# Entrypoint: source ROS + workspace, raise kernel UDP buffer (the AIRY at 10 Hz
+# overflows the default ~200 KB cap and drops 20–40% of frames). Container is
+# --privileged + --net=host, so sysctl here affects the host's network namespace,
+# which is exactly what the driver's recv socket needs.
 RUN printf '%s\n' \
     '#!/bin/bash' \
     'set -e' \
+    'sysctl -wq net.core.rmem_max=33554432 net.core.rmem_default=33554432 || true' \
     'source /opt/ros/humble/setup.bash' \
     'source /opt/ros_ws/install/setup.bash' \
     'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp' \

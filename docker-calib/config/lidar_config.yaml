@@ -7,6 +7,8 @@ lidar:
       lidar_type: RSAIRY
       msop_port: 6699
       difop_port: 7788
+      socket_recv_buf: 16777216 # 16 MB; pairs with sysctl net.core.rmem_max=33M
+                                # to defeat the 400 KB default that drops AIRY frames
       imu_port: 6688            # AIRY default; 0 disables. Enable for FAST-LIVO2.
       user_layer_bytes: 0
       tail_layer_bytes: 0
@@ -14,7 +16,10 @@ lidar:
       min_distance: 0.2
       max_distance: 200
       use_lidar_clock: true
-      dense_points: true        # discard NAN points for calibration robustness
+      dense_points: false       # leave NaNs in; Python tools already pass skip_nans=True
+                                # to pc2.read_points. Filtering in the driver thread
+                                # makes it miss UDP frames and drops the publish rate
+                                # from 10 Hz to ~8 Hz on the AIRY's hemispherical scan.
 
       ts_first_point: true
       start_angle: 0

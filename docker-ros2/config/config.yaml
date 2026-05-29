@@ -7,7 +7,7 @@ lidar:
       lidar_type: RSAIRY
       msop_port: 6699
       difop_port: 7788
-      imu_port: 0
+      imu_port: 6688
       user_layer_bytes: 0
       tail_layer_bytes: 0
 
