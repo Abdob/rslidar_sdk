@@ -1,0 +1,182 @@
+# Docker Compose for the rslidar_sdk pipeline.
+#
+# One service per workflow + the shared GPU camera service. Profiles select
+# which workflow runs; pass `--profile <name>` to docker compose:
+#
+#   docker compose --profile camera     up         # GPU camera only
+#   docker compose --profile sensors    up         # LiDAR + camera (raw streams)
+#   docker compose --profile intrinsic  up         # camera + chessboard intrinsic calibrator
+#   docker compose --profile extrinsic  up         # LiDAR + camera + extrinsic calibrator + RViz
+#   docker compose --profile colorize   up         # LiDAR + camera + colorize_node + RViz
+#   docker compose --profile lidar-only up         # docker-ros2 baseline LiDAR
+#
+# Add `-d` to detach, `--build` to rebuild images first, `down -v` to remove.
+#
+# Prerequisites:
+#   - NVIDIA Container Toolkit installed on the host (for the camera service)
+#   - `xhost +local:docker` for X11 forwarding of RViz / OpenCV windows
+#
+# Each profile uses container_name `rslidar-airy-calib` (or -ros2 / -gst-camera)
+# so the existing `docker exec rslidar-airy-calib ...` snippets in the READMEs
+# keep working. Profiles are mutually exclusive on the calib container — only
+# one calib service can run at a time.
+
+services:
+
+  # ----------------------------------------------------------------------
+  # GPU MJPEG camera publisher. Provides /image_raw at 30 Hz on the host
+  # DDS network. Built from ./docker-gst-camera.
+  # ----------------------------------------------------------------------
+  camera:
+    image: rslidar-airy-gst-camera
+    container_name: rslidar-airy-gst-camera
+    profiles: [camera, sensors, intrinsic, extrinsic, colorize, record]
+    build:
+      context: .
+      dockerfile: docker-gst-camera/Dockerfile
+    network_mode: host
+    privileged: true
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-/tmp}
+      NVIDIA_DRIVER_CAPABILITIES: all
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /dev:/dev
+      - ./cyclonedds.xml:/opt/cyclonedds.xml:ro
+      - ./docker-calib/config:/opt/calib/config:ro
+      - ./docker-gst-camera/config:/opt/camera/config:rw
+      - ./docker-gst-camera/launch:/opt/camera/launch:ro
+    command: ros2 launch /opt/camera/launch/camera.launch.py
+
+  # ----------------------------------------------------------------------
+  # LiDAR-only (the docker-ros2 image). Use for testing the AIRY in
+  # isolation; doesn't share any tooling with docker-calib.
+  # ----------------------------------------------------------------------
+  lidar-only:
+    image: rslidar-airy-ros2
+    container_name: rslidar-airy-ros2
+    profiles: [lidar-only]
+    build:
+      context: .
+      dockerfile: docker-ros2/Dockerfile
+    network_mode: host
+    privileged: true
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-/tmp}
+      NVIDIA_DRIVER_CAPABILITIES: all
+    devices:
+      - /dev/dri
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+
+  # ----------------------------------------------------------------------
+  # docker-calib services. All four share container_name rslidar-airy-calib
+  # because they're mutually exclusive (different profiles).
+  # ----------------------------------------------------------------------
+
+  # Just the LiDAR driver, no extra tooling. Pairs with camera service.
+  sensors:
+    image: rslidar-airy-calib
+    container_name: rslidar-airy-calib
+    profiles: [sensors, record]
+    build:
+      context: .
+      dockerfile: docker-calib/Dockerfile
+    network_mode: host
+    privileged: true
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-/tmp}
+      NVIDIA_DRIVER_CAPABILITIES: all
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /dev:/dev
+      - ./cyclonedds.xml:/opt/cyclonedds.xml:ro
+      - ./docker-calib/config:/opt/calib/config:rw
+      - ./docker-calib/config/lidar_config.yaml:/opt/ros_ws/src/rslidar_sdk/config/config.yaml:ro
+      - ./docker-calib/scripts:/opt/calib/scripts:ro
+      - ./docker-calib/launch:/opt/calib/launch:ro
+      - ./docker-calib/rviz:/opt/calib/rviz:ro
+    command: ros2 launch /opt/calib/launch/sensors.launch.py
+
+  # Fisheye chessboard intrinsic calibrator. Uses the camera service for
+  # frames; no LiDAR involvement.
+  intrinsic:
+    image: rslidar-airy-calib
+    container_name: rslidar-airy-calib
+    profiles: [intrinsic]
+    build:
+      context: .
+      dockerfile: docker-calib/Dockerfile
+    network_mode: host
+    privileged: true
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-/tmp}
+      NVIDIA_DRIVER_CAPABILITIES: all
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./docker-calib/config:/opt/calib/config:rw
+      - ./docker-calib/scripts:/opt/calib/scripts:ro
+      - ./docker-calib/launch:/opt/calib/launch:ro
+    command: ros2 launch /opt/calib/launch/intrinsic.launch.py
+
+  # FAST-Calib extrinsic (camera ↔ LiDAR) calibration + RViz.
+  extrinsic:
+    image: rslidar-airy-calib
+    container_name: rslidar-airy-calib
+    profiles: [extrinsic]
+    build:
+      context: .
+      dockerfile: docker-calib/Dockerfile
+    network_mode: host
+    privileged: true
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-/tmp}
+      NVIDIA_DRIVER_CAPABILITIES: all
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /dev:/dev
+      - ./cyclonedds.xml:/opt/cyclonedds.xml:ro
+      - ./docker-calib/config:/opt/calib/config:rw
+      - ./docker-calib/config/lidar_config.yaml:/opt/ros_ws/src/rslidar_sdk/config/config.yaml:ro
+      - ./docker-calib/scripts:/opt/calib/scripts:ro
+      - ./docker-calib/launch:/opt/calib/launch:ro
+      - ./docker-calib/rviz:/opt/calib/rviz:ro
+    command: ros2 launch /opt/calib/launch/extrinsic.launch.py
+
+  # Live colorized cloud publisher + RViz.
+  colorize:
+    image: rslidar-airy-calib
+    container_name: rslidar-airy-calib
+    profiles: [colorize]
+    build:
+      context: .
+      dockerfile: docker-calib/Dockerfile
+    network_mode: host
+    privileged: true
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-/tmp}
+      NVIDIA_DRIVER_CAPABILITIES: all
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /dev:/dev
+      - ./cyclonedds.xml:/opt/cyclonedds.xml:ro
+      - ./docker-calib/config:/opt/calib/config:rw
+      - ./docker-calib/config/lidar_config.yaml:/opt/ros_ws/src/rslidar_sdk/config/config.yaml:ro
+      - ./docker-calib/scripts:/opt/calib/scripts:ro
+      - ./docker-calib/launch:/opt/calib/launch:ro
+      - ./docker-calib/rviz:/opt/calib/rviz:ro
+    command: ros2 launch /opt/calib/launch/colorize.launch.py

@@ -51,11 +51,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-numpy \
         python3-scipy \
         python3-yaml \
-        ros-humble-usb-cam \
         ros-humble-image-transport \
+        ros-humble-image-transport-plugins \
         ros-humble-cv-bridge \
         ros-humble-tf-transformations \
     && rm -rf /var/lib/apt/lists/*
+# Note: no camera capture driver here. Camera publishing lives in the dedicated
+# docker-gst-camera container (DeepStream + gscam2 GPU pipeline). docker-calib
+# consumes /image_raw over the host DDS network. image_transport-plugins is
+# kept so /image_raw/compressed decoders are available locally.
 
 # OpenCV with contrib (ArUco), Open3D. ROS 2 Humble's cv_bridge is compiled
 # against NumPy 1.x; opencv-contrib-python 4.10+ wheels are built against
@@ -83,10 +87,14 @@ RUN chmod +x /opt/calib/scripts/*.py 2>/dev/null || true
 RUN printf '%s\n' \
     '#!/bin/bash' \
     'set -e' \
-    'sysctl -wq net.core.rmem_max=33554432 net.core.rmem_default=33554432 || true' \
+    '# 128 MB UDP recv buffer for the AIRY at 10 Hz AND raw image messages' \
+    '# from docker-gst-camera at 30 Hz (2.7 MB each). 32 MB was enough for' \
+    '# LiDAR alone; adding the camera stream needs more.' \
+    'sysctl -wq net.core.rmem_max=134217728 net.core.rmem_default=134217728 || true' \
     'source /opt/ros/humble/setup.bash' \
     'source /opt/ros_ws/install/setup.bash' \
     'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp' \
+    '[ -f /opt/cyclonedds.xml ] && export CYCLONEDDS_URI=file:///opt/cyclonedds.xml' \
     'export PYTHONPATH=/opt/calib/scripts:${PYTHONPATH:-}' \
     'exec "$@"' \
     > /entrypoint.sh && chmod +x /entrypoint.sh

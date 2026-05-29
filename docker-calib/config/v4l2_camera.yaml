@@ -1,0 +1,22 @@
+/**:
+  ros__parameters:
+    video_device: "/dev/video0"
+    # MJPG = the camera's native compressed format. v4l2_camera reads it
+    # directly from V4L2 — no JPEG decode happens inside the capture node.
+    # That's the whole point of switching off ros-humble-usb-cam: usb_cam's
+    # mjpeg2rgb decode pipeline capped us at ~19 fps; here we hit the full
+    # 30 fps the camera advertises.
+    pixel_format: "MJPG"
+    image_size: [1280, 720]
+    # time_per_frame is [numerator, denominator] of seconds-per-frame.
+    # [1, 30] = 30 fps. Camera also supports [1, 15] etc; see `v4l2-ctl
+    # --list-formats-ext` on the host.
+    time_per_frame: [1, 30]
+    camera_frame_id: "camera"
+    # output_encoding controls the *raw* (sensor_msgs/Image) topic. We don't
+    # subscribe to raw from the capture node directly — the launch decodes
+    # via a separate `image_transport republish` process so the decode cost
+    # is off the capture path. But if any consumer ever does subscribe to
+    # the raw transport, this is the encoding it'll get.
+    output_encoding: "rgb8"
+    camera_info_url: "file:///opt/calib/config/intrinsics_ros.yaml"

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Cyclone DDS config tuned for the rslidar_sdk pipeline. Used by every
+  container in this repo via CYCLONEDDS_URI (set in the docker_run.sh
+  scripts and docker-compose.yaml).
+
+  Two problems this addresses:
+
+  1. Large messages (raw 1280x720 RGB image = 2.7 MB) overflowing the
+     default fragment + socket buffers. Manifests as "sequence exceeds
+     buffer" warnings and >85% packet loss on /image_raw.
+
+  2. Cross-distro (Jazzy <-> Humble) discovery and reliable delivery
+     stalling on default QoS negotiation. We force a clean localhost-only
+     setup so the two distros find each other reliably.
+-->
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config
+                                https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+  <Domain id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="lo" priority="default" multicast="false"/>
+      </Interfaces>
+      <AllowMulticast>false</AllowMulticast>
+      <!-- 16 MB UDP fragments. Raw 720p RGB = ~2.7 MB so one image fits
+           in a few fragments and won't blow the kernel buffer. -->
+      <MaxMessageSize>16384B</MaxMessageSize>
+      <FragmentSize>16000B</FragmentSize>
+    </General>
+
+    <Internal>
+      <!-- Socket-level buffers. 128 MB matches the sysctl bump done in
+           docker-calib's and docker-gst-camera's entrypoints. -->
+      <SocketReceiveBufferSize min="128MB" max="128MB"/>
+      <SocketSendBufferSize    min="128MB" max="128MB"/>
+      <!-- High watermark for the writer history cache. Without raising
+           this, fast publishers (30 fps × 2.7 MB) backlog and stall. -->
+      <Watermarks>
+        <WhcHigh>64MB</WhcHigh>
+      </Watermarks>
+      <MaxParticipants>32</MaxParticipants>
+    </Internal>
+
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <!-- Localhost-only discovery; we're all on --net=host. -->
+      <Peers>
+        <Peer address="localhost"/>
+      </Peers>
+    </Discovery>
+  </Domain>
+</CycloneDDS>
