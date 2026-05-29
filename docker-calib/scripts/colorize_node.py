@@ -89,25 +89,37 @@ class Colorizer(Node):
         if img is None:
             return  # no camera frame yet, just drop this cloud
 
-        # Read x,y,z as a single (N,3) array.
-        pts = np.array([
-            (p[0], p[1], p[2]) for p in pc2.read_points(
-                msg, field_names=("x", "y", "z"), skip_nans=True)
-        ], dtype=np.float32)
+        # Read x,y,z as a single (N,3) array. Bypass pc2.read_points (per-point
+        # Python loop, ~150 ms on 50k points) by reinterpreting the raw byte
+        # buffer with np.frombuffer + a structured dtype. ~30x faster.
+        offsets = {f.name: f.offset for f in msg.fields}
+        if not {"x", "y", "z"}.issubset(offsets):
+            return
+        dt = np.dtype({
+            "names":   ["x", "y", "z"],
+            "formats": [np.float32, np.float32, np.float32],
+            "offsets": [offsets["x"], offsets["y"], offsets["z"]],
+            "itemsize": msg.point_step,
+        })
+        cloud = np.frombuffer(msg.data, dtype=dt, count=msg.width * msg.height)
+        pts = np.column_stack([cloud["x"], cloud["y"], cloud["z"]])  # (N, 3) float32
+        # Drop NaN / inf rows in one vectorized pass.
+        finite = np.isfinite(pts).all(axis=1)
+        pts = pts[finite]
         if len(pts) == 0:
             return
 
         # Transform to camera frame: p_cam = R p_lidar + t
-        pts_cam = (self.R @ pts.T.astype(np.float64)).T + self.t   # (N,3)
+        pts_cam = pts.astype(np.float64) @ self.R.T + self.t   # (N,3)
 
         # Keep only points in front of the camera.
         front_mask = pts_cam[:, 2] > 1e-3
+        if not np.any(front_mask):
+            return
         pts_lidar_front = pts[front_mask]
         pts_cam_front   = pts_cam[front_mask]
-        if len(pts_cam_front) == 0:
-            return
 
-        # Project.
+        # Project (vectorized in cv2, fast).
         if self.fisheye:
             proj, _ = cv2.fisheye.projectPoints(
                 pts_cam_front.reshape(-1, 1, 3), np.zeros(3), np.zeros(3),
@@ -123,36 +135,45 @@ class Colorizer(Node):
         if not np.any(in_img):
             return
 
-        pts_out  = pts_lidar_front[in_img]
-        u_in     = u[in_img].astype(np.int32)
-        v_in     = v[in_img].astype(np.int32)
+        pts_out = pts_lidar_front[in_img]
+        u_in    = u[in_img].astype(np.int32)
+        v_in    = v[in_img].astype(np.int32)
 
         # Sample colors. img is BGR; reorder to RGB for the PCL `rgb` field.
-        bgr = img[v_in, u_in]                 # (M, 3)
-        rgb_u8 = bgr[:, ::-1].astype(np.uint8) # BGR -> RGB
-        rgb_packed = pack_rgb_float(rgb_u8)   # (M,)
+        bgr = img[v_in, u_in]                  # (M, 3)
+        rgb_u8 = bgr[:, ::-1].astype(np.uint8)  # BGR -> RGB
+        rgb_packed = pack_rgb_float(rgb_u8)    # (M,) float32
 
-        # Build a structured (N,4) array → PointCloud2 with xyz + rgb fields.
+        # Build a structured (M,) array → PointCloud2 with xyz + rgb fields.
+        # Use .tobytes() into msg.data directly — avoids the .tolist() roundtrip
+        # in pc2.create_cloud which is the OTHER ~50 ms cost on big clouds.
         n = len(pts_out)
-        cloud_struct = np.zeros(n, dtype=[
-            ("x",   np.float32),
-            ("y",   np.float32),
-            ("z",   np.float32),
-            ("rgb", np.float32),
-        ])
-        cloud_struct["x"] = pts_out[:, 0]
-        cloud_struct["y"] = pts_out[:, 1]
-        cloud_struct["z"] = pts_out[:, 2]
+        cloud_struct = np.zeros(n, dtype=np.dtype({
+            "names":   ["x", "y", "z", "rgb"],
+            "formats": [np.float32, np.float32, np.float32, np.float32],
+            "offsets": [0, 4, 8, 12],
+            "itemsize": 16,
+        }))
+        cloud_struct["x"]   = pts_out[:, 0]
+        cloud_struct["y"]   = pts_out[:, 1]
+        cloud_struct["z"]   = pts_out[:, 2]
         cloud_struct["rgb"] = rgb_packed
 
-        fields = [
+        out = PointCloud2()
+        out.header = Header(stamp=msg.header.stamp, frame_id=msg.header.frame_id)
+        out.height = 1
+        out.width = n
+        out.fields = [
             PointField(name="x",   offset=0,  datatype=PointField.FLOAT32, count=1),
             PointField(name="y",   offset=4,  datatype=PointField.FLOAT32, count=1),
             PointField(name="z",   offset=8,  datatype=PointField.FLOAT32, count=1),
             PointField(name="rgb", offset=12, datatype=PointField.FLOAT32, count=1),
         ]
-        header = Header(stamp=msg.header.stamp, frame_id=msg.header.frame_id)
-        out = pc2.create_cloud(header, fields, cloud_struct.tolist())
+        out.is_bigendian = False
+        out.point_step = 16
+        out.row_step = 16 * n
+        out.is_dense = True
+        out.data = cloud_struct.tobytes()
         self.pub.publish(out)
 
 
