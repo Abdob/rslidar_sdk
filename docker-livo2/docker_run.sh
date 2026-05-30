@@ -60,5 +60,6 @@ exec docker run --rm -it \
     -v "$HOST_DIR/config/rsairy.yaml":/opt/catkin_ws/src/FAST-LIVO2/config/rsairy.yaml:ro \
     -v "$HOST_DIR/config/camera_fisheye_rsairy.yaml":/opt/catkin_ws/src/FAST-LIVO2/config/camera_fisheye_rsairy.yaml:ro \
     -v "$HOST_DIR/launch/mapping_rsairy.launch":/opt/catkin_ws/src/FAST-LIVO2/launch/mapping_rsairy.launch:ro \
+    -v /home/wave/Documents/rslidar_sdk/bags:/opt/calib/bags:rw \
     --name rslidar-airy-livo2 \
     rslidar-airy-livo2 "${ARGS[@]}"
