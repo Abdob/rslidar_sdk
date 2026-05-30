@@ -1,0 +1,20 @@
+# Fisheye camera intrinsics for FAST-LIVO2.
+# Pulled directly from docker-calib/config/intrinsics.yaml (K + D from the
+# Stage-1 chessboard calibration). Re-paste these whenever you recalibrate.
+#
+# EquidistantCamera = OpenCV's cv2.fisheye model (4 distortion params).
+cam_model: EquidistantCamera
+
+cam_width:  1280
+cam_height: 720
+scale: 1.0
+
+cam_fx: 324.0544793557125
+cam_fy: 323.5867045702873
+cam_cx: 622.9429624001867
+cam_cy: 337.49323244493405
+
+k1: -0.017456474252681292
+k2: -0.0009637284183639714
+k3:  0.0001244009372478386
+k4: -0.0003185065104838195

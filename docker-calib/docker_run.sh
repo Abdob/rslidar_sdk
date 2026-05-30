@@ -57,5 +57,6 @@ exec docker run --rm -it \
     -v "$HOST_DIR/scripts":/opt/calib/scripts:ro \
     -v "$HOST_DIR/launch":/opt/calib/launch:ro \
     -v "$HOST_DIR/rviz":/opt/calib/rviz:ro \
+    -v /home/wave/Documents/rslidar_sdk/bags:/opt/calib/bags:rw \
     --name rslidar-airy-calib \
     rslidar-airy-calib "${ARGS[@]}"

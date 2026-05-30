@@ -1,0 +1,36 @@
+<launch>
+<!--
+  FAST-LIVO2 mapping for the RoboSense AIRY + fisheye USB camera rig.
+  Mirrors mapping_avia.launch but loads our two AIRY-specific YAMLs.
+
+  Topics expected (provided by docker-calib's record_bag.sh + ROS 2-to-1
+  bag conversion, or by a live ros1_bridge):
+    /rslidar_points     sensor_msgs/PointCloud2  (XYZIRT)
+    /rslidar_imu_data   sensor_msgs/Imu
+    /image_raw          sensor_msgs/Image  OR  /image_raw/compressed
+-->
+  <arg name="rviz" default="true"/>
+
+  <rosparam command="load" file="$(find fast_livo)/config/rsairy.yaml"/>
+
+  <node pkg="fast_livo" type="fastlivo_mapping" name="laserMapping"
+        output="screen">
+    <rosparam file="$(find fast_livo)/config/camera_fisheye_rsairy.yaml"/>
+  </node>
+
+  <group if="$(arg rviz)">
+    <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz"
+          args="-d $(find fast_livo)/rviz_cfg/fast_livo2.rviz"/>
+  </group>
+
+  <!--
+    Our docker-gst-camera publishes only raw (`/image_raw`) by default. If a
+    bag was recorded with `/image_raw/compressed` instead, uncomment this to
+    inflate it into the raw topic FAST-LIVO2 reads.
+  -->
+  <!--
+  <node pkg="image_transport" type="republish" name="republish"
+        args="compressed in:=/image_raw raw out:=/image_raw"
+        output="screen" respawn="true"/>
+  -->
+</launch>

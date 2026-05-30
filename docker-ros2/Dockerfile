@@ -35,6 +35,10 @@ COPY docker-ros2/config/config.yaml /opt/ros_ws/src/rslidar_sdk/config/config.ya
 # rs_driver's vendored input.hpp uses std::shared_ptr without #include <memory>
 # under newer libstdc++; force-include both standard headers.
 WORKDIR /opt/ros_ws
+# Match docker-calib: XYZIRT point type so FAST-LIVO2's robosense_handler gets
+# per-point time + ring fields.
+RUN sed -i 's|^set(POINT_TYPE XYZI)$|set(POINT_TYPE XYZIRT)|' \
+    /opt/ros_ws/src/rslidar_sdk/CMakeLists.txt
 RUN . /opt/ros/humble/setup.sh && \
     colcon build \
         --cmake-args \

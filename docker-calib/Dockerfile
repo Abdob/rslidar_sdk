@@ -34,6 +34,12 @@ COPY config/     /opt/ros_ws/src/rslidar_sdk/config/
 COPY docker-calib/config/lidar_config.yaml /opt/ros_ws/src/rslidar_sdk/config/config.yaml
 
 WORKDIR /opt/ros_ws
+# Switch the rslidar_sdk point type from XYZI to XYZIRT so each point has
+# `time` (relative timestamp) + `ring` fields. FAST-LIVO2's robosense_handler
+# requires them for per-point motion compensation. CMakeLists hard-codes the
+# default via an unconditional set(), so we patch the line before building.
+RUN sed -i 's|^set(POINT_TYPE XYZI)$|set(POINT_TYPE XYZIRT)|' \
+    /opt/ros_ws/src/rslidar_sdk/CMakeLists.txt
 RUN . /opt/ros/humble/setup.sh && \
     colcon build \
         --cmake-args \
