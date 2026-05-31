@@ -20,19 +20,16 @@ common:
   ros_driver_bug_fix: false
 
 extrin_calib:
-  # IMU-to-LiDAR (T, R). The AIRY's built-in IMU is NOT axis-aligned with the
-  # LiDAR (the datasheet "identity" claim is wrong for this unit): at rest
-  # gravity sits on IMU +Y while the LiDAR floor/wall geometry shows LiDAR up
-  # is +Z, i.e. the IMU is rotated ~90 deg about X relative to the LiDAR.
-  # With identity, a yaw about true vertical (LiDAR +Z) was being applied as a
-  # rotation about LiDAR +Y, so the map swept into an arc under motion.
-  # This -90 deg-about-X rotation maps LiDAR +Z -> IMU +Y. If a residual
-  # yaw/flip remains, try the +90 deg variant [1,0,0, 0,0,-1, 0,1,0], or run a
-  # proper LiDAR-IMU extrinsic calibration to refine.
-  extrinsic_T: [0.0, 0.0, 0.0]
-  extrinsic_R: [1,  0,  0,
-                0,  0,  1,
-                0, -1,  0]
+  # IMU-to-LiDAR (T, R). FACTORY value, read from the AIRY DIFOP packet (the
+  # built-in IMU is NOT axis-aligned with the LiDAR; the datasheet "identity"
+  # is wrong for this unit). It is a ~180 deg rotation: IMU x=-LiDAR y,
+  # IMU y=-LiDAR x, IMU z=-LiDAR z. Cross-checks against gravity: LiDAR up (-X)
+  # -> IMU +Y, matching the measured at-rest accel. To re-read it for another
+  # unit, see the RS_INFO print added in rs_driver decoder_RSAIRY.hpp.
+  extrinsic_T: [0.00425, 0.00418, -0.00446]
+  extrinsic_R: [ 0.00370768, -0.999987,    0.0033864,
+                -0.999925,   -0.00374694, -0.0116482,
+                 0.0116607,  -0.00334295, -0.999926]
 
   # Camera-to-LiDAR. From docker-calib/config/extrinsic.yaml (T_camera_lidar),
   # i.e. p_camera = Rcl @ p_lidar + Pcl. **Update these whenever you re-run
