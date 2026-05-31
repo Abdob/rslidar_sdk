@@ -8,6 +8,8 @@ to the same rig:
    (4 ArUco markers + 4 circular holes).
 3. **Live colorized point cloud** publisher that combines the two — RViz2
    shows the AIRY's geometry with per-point colors sampled from the camera.
+4. **Timestamp sync + bag recording for FAST-LIVO2** — put LiDAR, IMU, and
+   camera on one clock and record the three input topics.
 
 ## Architecture
 
@@ -265,13 +267,104 @@ the uncoloured stream for comparison — toggle it on to debug.
 The `colorize_node.py` publishes at the LiDAR rate (~10 Hz for AIRY).
 Points behind the camera or projecting outside the image are dropped.
 
+## Stage 4 — Timestamp sync + recording for FAST-LIVO2
+
+FAST-LIVO2 fuses LiDAR + IMU + camera and needs all three on **one** timeline.
+
+### The clock model
+
+[config/lidar_config.yaml](config/lidar_config.yaml) sets `use_lidar_clock: true`,
+so `/rslidar_points` **and** `/rslidar_imu_data` are stamped with the AIRY's
+internal hardware clock (one hardware-synced clock for cloud + IMU). The two
+helper nodes finish the job:
+
+| Node | In → Out | What it does |
+|------|----------|--------------|
+| [scripts/imu_bridge.py](scripts/imu_bridge.py) | `/rslidar_imu_data` → `/rslidar_imu_data_fixed` | accel g → m/s²; **stamp unchanged** (stays on lidar clock) |
+| [scripts/image_restamp.py](scripts/image_restamp.py) | `/image_raw` → `/image_raw_synced` | maps the host-clock camera onto the lidar clock |
+
+The camera (`/image_raw`, gscam2 with `use_gst_timestamps:false`) is on the
+**host** wall clock, a different epoch from the lidar clock. `image_restamp.py`
+closes the gap in two parts:
+
+- **Coarse offset (measured live):** it watches `/rslidar_imu_data` and tracks
+  the *minimum* of `host_recv − lidar_stamp` over a 5 s window — the
+  least-latency sample is the true clock offset. Robust to any epoch gap.
+- **Fine shift (`cam_lidar_time_shift` from [config/time_sync.yaml](config/time_sync.yaml)):**
+  the sub-frame camera capture-to-stamp lag, which only **Kalibr** can recover
+  (FAST-Calib is spatial-only). Leave it `0.0` until Stage 4a.
+
+Output: `new_lidar_stamp = host_stamp − coarse_offset + cam_lidar_time_shift`.
+
+### Stage 4a — Temporal calibration with Kalibr
+
+Recovers `cam_lidar_time_shift`. You need a **printed AprilGrid**
+(download/print per [config/kalibr_aprilgrid.yaml](config/kalibr_aprilgrid.yaml)
+— measure a tag edge and set `tagSize`; `tagSpacing` is a scale-invariant ratio).
+
+1. **Bring up the full sensor stack** (the record scripts pre-flight these and
+   abort if any is silent):
+   ```
+   ./docker-gst-camera/docker_run.sh        # terminal 1 → /image_raw
+   ./docker-calib/docker_run.sh sensors     # terminal 2 → /rslidar_points + /rslidar_imu_data[_fixed]
+   ```
+2. **Record a wave-the-rig bag** (Ctrl-C after ~60–90 s exciting all 6 axes —
+   3 rotations + 3 translations — with the AprilGrid in frame):
+   ```
+   ./docker-calib/docker_exec.sh bash /opt/calib/scripts/record_calib_bag.sh kalibr_run1
+   ```
+   This records `/image_raw_synced` (coarse-aligned) + `/rslidar_imu_data_fixed`,
+   so Kalibr sees the small residual shift it can actually solve. The script
+   verifies the bag is non-empty before exiting.
+3. **Convert to a ROS 1 bag — INSIDE the container** (Kalibr reads ROS 1 only):
+   ```
+   ./docker-calib/docker_exec.sh bash /opt/calib/scripts/convert_bag.sh kalibr_run1
+   ```
+4. **Run Kalibr — ON THE HOST** (it launches the Kalibr Docker image, which the
+   calib container can't do):
+   ```
+   bash docker-calib/scripts/run_kalibr.sh kalibr_run1
+   # override the image: KALIBR_IMG=myrepo/kalibr:latest bash .../run_kalibr.sh kalibr_run1
+   ```
+   It prints `time_shift_cam_imu`.
+5. **Paste the result** into `cam_lidar_time_shift` in
+   [config/time_sync.yaml](config/time_sync.yaml). `image_restamp.py` reloads it
+   on next launch — no rebuild.
+
+### Stage 4b — Record the FAST-LIVO2 bag
+
+With the sensor stack still up (Stage 4a step 1):
+```
+./docker-calib/docker_exec.sh bash /opt/calib/scripts/ros_bag_record.sh ezoffice
+```
+Records the three FAST-LIVO2 inputs, all on the lidar clock:
+`/rslidar_points`, `/rslidar_imu_data_fixed`, `/image_raw_synced`. Then convert
+and hand off to FAST-LIVO2:
+```
+./docker-calib/docker_exec.sh bash /opt/calib/scripts/convert_bag.sh ezoffice
+mv bags/ezoffice.bag docker-livo2/bags/
+```
+[docker-livo2/config/rsairy.yaml](../docker-livo2/config/rsairy.yaml) already
+reads `img_topic: /image_raw_synced` with `img_time_offset: 0.0` (the offset is
+baked into the recorded stamps — don't set it again there or it double-counts).
+
 ## Files
 
 | Path | Purpose |
 |------|---------|
 | [Dockerfile](Dockerfile) | `osrf/ros:humble-desktop` + usb_cam + rslidar_sdk + OpenCV 4.8 + Open3D |
 | [config/target.yaml](config/target.yaml) | **EDIT THIS** — board geometry, ArUco IDs, LiDAR-detect tuning |
-| [config/lidar_config.yaml](config/lidar_config.yaml) | AIRY ROS publisher config (RSAIRY, ports 6699/7788) |
+| [config/lidar_config.yaml](config/lidar_config.yaml) | AIRY ROS publisher config (RSAIRY, ports 6699/7788; `use_lidar_clock: true`) |
+| [config/time_sync.yaml](config/time_sync.yaml) | **EDIT after Kalibr** — `cam_lidar_time_shift` read by image_restamp.py |
+| [config/kalibr_aprilgrid.yaml](config/kalibr_aprilgrid.yaml) | **EDIT `tagSize`** — Kalibr AprilGrid target |
+| [config/kalibr_camchain.yaml](config/kalibr_camchain.yaml) | Kalibr camera model (from intrinsics_ros.yaml) |
+| [config/kalibr_imu.yaml](config/kalibr_imu.yaml) | Kalibr IMU noise model for the AIRY IMU |
+| [scripts/imu_bridge.py](scripts/imu_bridge.py) | `/rslidar_imu_data` (g) → `/rslidar_imu_data_fixed` (m/s²), stamp kept |
+| [scripts/image_restamp.py](scripts/image_restamp.py) | `/image_raw` (host clock) → `/image_raw_synced` (lidar clock) |
+| [scripts/record_calib_bag.sh](scripts/record_calib_bag.sh) | Record camera+IMU bag for Kalibr (Stage 4a) |
+| [scripts/run_kalibr.sh](scripts/run_kalibr.sh) | **Host-side** — runs Kalibr in Docker, prints `time_shift_cam_imu` |
+| [scripts/ros_bag_record.sh](scripts/ros_bag_record.sh) | Record the 3 FAST-LIVO2 inputs (Stage 4b) |
+| [scripts/convert_bag.sh](scripts/convert_bag.sh) | ROS 2 bag → ROS 1 `.bag` (Kalibr / FAST-LIVO2) |
 | [config/usb_cam.yaml](config/usb_cam.yaml) | usb_cam parameters (device, resolution, pixel format) |
 | [config/intrinsics.yaml](config/intrinsics.yaml) | **Generated** by Stage 1 |
 | [config/extrinsic.yaml](config/extrinsic.yaml) | **Generated** by Stage 2 |
@@ -300,6 +393,16 @@ Points behind the camera or projecting outside the image are dropped.
 - **Colorized cloud is sparse or misaligned:** re-run the extrinsic stage
   with the board at a different distance/angle and check RMS. Also confirm
   the camera image is sharp (autofocus off, `autoexposure: true` is fine).
+- **Record script aborts: "ABORT: not all inputs are live":** a required topic
+  isn't publishing. Start the camera (`docker-gst-camera/docker_run.sh`) and the
+  sensors (`docker-calib/docker_run.sh sensors`) **before** recording — the
+  record scripts won't produce a silent 0-message bag.
+- **`run_kalibr.sh`: "docker: command not found":** you ran it inside the calib
+  container. Run it **on the host** (it launches the Kalibr Docker image); do
+  the `convert_bag.sh` step inside the container.
+- **Kalibr: too few AprilGrid detections:** re-record with more grid coverage,
+  slower motion (less blur), and the board filling more of the frame. Confirm
+  `tagSize`/`tagSpacing` in `kalibr_aprilgrid.yaml` match the printout.
 - **NumPy ABI errors:** the Dockerfile pins `opencv-contrib-python==4.8.1.78`
   + `numpy<2` because ROS 2 Humble's `cv_bridge` is built against NumPy 1.x.
   Don't `pip install --upgrade opencv-contrib-python` inside the container.

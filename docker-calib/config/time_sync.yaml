@@ -1,0 +1,16 @@
+# Camera -> LiDAR-clock temporal calibration.
+#
+# Used by docker-calib/scripts/image_restamp.py. That node already removes the
+# COARSE host<->lidar clock offset live (by watching /rslidar_imu_data, which is
+# on the AIRY hardware clock once use_lidar_clock:true). What it cannot measure
+# is the FINE, sub-frame camera capture-to-stamp lag. Kalibr estimates that.
+#
+# cam_lidar_time_shift [s]: the residual shift to add to every /image_raw stamp
+#   AFTER the coarse offset is removed. Take it from Kalibr's output:
+#       kalibr_calibrate_imu_camera -> results-imucam-*.txt -> time_shift_cam_imu
+#   Convention applied by the node:
+#       new_lidar_stamp = host_stamp - coarse_offset + cam_lidar_time_shift
+#   (a positive value pushes the image later on the lidar timeline).
+#
+# Leave 0.0 until you have run Kalibr (see docker-calib/scripts/run_kalibr.sh).
+cam_lidar_time_shift: 0.0

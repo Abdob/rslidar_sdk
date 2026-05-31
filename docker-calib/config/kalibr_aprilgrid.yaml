@@ -1,0 +1,17 @@
+# Kalibr AprilGrid target description.
+#
+# Print an AprilGrid (Kalibr ships a PDF generator:
+#   kalibr_create_target_pdf --type apriltag --nx 6 --ny 6 \
+#       --tsize 0.088 --tspace 0.3)
+# then measure the PRINTED tag size and edit tagSize/tagSpacing below to match
+# your printout exactly -- the temporal result is insensitive to this but the
+# spatial extrinsic is not.
+target_type: "aprilgrid"
+tagCols: 6            # number of apriltags along x
+tagRows: 6            # number of apriltags along y
+tagSize: 0.024        # edge length of one tag, metres. The 80x80cm A0 PDF was
+                      # printed at 18x18 cm (0.225x). For a 6x6 grid the pattern
+                      # spans 7.5*tagSize, so 0.18 m / 7.5 = 0.024 m. VERIFY:
+                      # one black tag edge should measure ~2.4 cm; if not, set
+                      # this to (measured edge in metres).
+tagSpacing: 0.3       # gap-to-tag ratio; scale-invariant, unchanged by resizing

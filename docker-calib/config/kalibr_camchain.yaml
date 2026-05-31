@@ -1,0 +1,15 @@
+# Kalibr camera chain for the fisheye USB camera, converted from
+# docker-calib/config/intrinsics_ros.yaml (equidistant model). Kalibr's
+# "pinhole-equidistant" == OpenCV fisheye == ROS "equidistant".
+#
+# rostopic points at the COARSELY restamped image (image_restamp.py) so the
+# camera and IMU share a clock for kalibr_calibrate_imu_camera. If you re-run
+# the intrinsic calibration, regenerate intrinsics/[fx fy cx cy] and the 4
+# distortion_coeffs below.
+cam0:
+  camera_model: pinhole
+  intrinsics: [324.0544793557125, 323.5867045702873, 622.9429624001867, 337.49323244493405]
+  distortion_model: equidistant
+  distortion_coeffs: [-0.017456474252681292, -0.0009637284183639714, 0.0001244009372478386, -0.0003185065104838195]
+  rostopic: /image_raw_synced
+  resolution: [1280, 720]

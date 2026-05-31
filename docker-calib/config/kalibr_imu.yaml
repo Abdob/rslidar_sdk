@@ -1,0 +1,14 @@
+# Kalibr IMU model for the AIRY's built-in IMU (/rslidar_imu_data_fixed).
+#
+# These noise densities are starting values of the right order of magnitude for
+# a MEMS IMU; for best temporal/extrinsic results characterise them with
+# allan_variance_ros on a ~2 h static recording and paste the results. The
+# temporal time_shift Kalibr returns is fairly insensitive to them, so these
+# defaults are fine for the timestamp-sync goal.
+rostopic: /rslidar_imu_data_fixed
+update_rate: 200.0                 # Hz, AIRY IMU stream rate
+
+accelerometer_noise_density: 0.02      # [ m / s^2 / sqrt(Hz) ]
+accelerometer_random_walk:   0.001     # [ m / s^3 / sqrt(Hz) ]
+gyroscope_noise_density:     0.0017    # [ rad / s / sqrt(Hz) ]
+gyroscope_random_walk:       0.0001    # [ rad / s^2 / sqrt(Hz) ]

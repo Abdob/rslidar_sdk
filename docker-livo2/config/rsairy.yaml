@@ -7,7 +7,9 @@
 # POINT_TYPE=XYZIRT (done automatically in the patched Dockerfiles).
 
 common:
-  img_topic: "/image_raw"           # raw RGB from docker-gst-camera
+  img_topic: "/image_raw_synced"    # RGB from docker-gst-camera, restamped onto
+                                    # the lidar hardware clock by image_restamp.py
+                                    # (raw /image_raw is on the host clock)
   lid_topic: "/rslidar_points"      # AIRY 10 Hz cloud, XYZIRT
   imu_topic: "/rslidar_imu_data_fixed"  # bridged from /rslidar_imu_data
                                         # (g -> m/s^2, sensor-uptime ->
@@ -37,12 +39,13 @@ extrin_calib:
         -0.044799456977502206]
 
 time_offset:
-  # IMU is hardware-synced to the LiDAR, so 0.
+  # IMU and LiDAR share the AIRY hardware clock (use_lidar_clock: true), so 0.
   imu_time_offset: 0.0
-  # Camera is USB, capture-to-stamp lag varies. 0.1 is FAST-LIVO2's
-  # default for the Avia rig; refine with Kalibr (`--time-calibration`)
-  # once you've recorded a wave-the-rig bag.
-  img_time_offset: 0.1
+  # 0.0: the camera capture-to-stamp lag is now baked into the recorded
+  # /image_raw_synced stamps by image_restamp.py (coarse host<->lidar offset +
+  # the fine Kalibr cam_lidar_time_shift from docker-calib/config/time_sync.yaml).
+  # Do NOT also set it here or the shift is applied twice.
+  img_time_offset: 0.0
   exposure_time_init: 0.0
 
 preprocess:
