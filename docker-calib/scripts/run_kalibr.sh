@@ -24,7 +24,10 @@
 set -e
 
 NAME="${1:?Usage: run_kalibr.sh <bag_name>}"
-KALIBR_IMG="${KALIBR_IMG:-stereolabs/kalibr:kinetic}"
+# stereolabs/kalibr is NOT a Stereolabs algorithm -- it's a prebuilt Docker
+# image of the standard ethz-asl/kalibr toolbox (same kalibr_calibrate_imu_camera).
+# Override with any Kalibr image (e.g. christianbrommer/kalibr) or your own build.
+KALIBR_IMG="${KALIBR_IMG:-stereolabs/kalibr:latest}"
 
 # Resolve repo paths from this script's own location (docker-calib/scripts/),
 # so it works from any host cwd. bags/ and docker-calib/config/ are the same
@@ -49,11 +52,17 @@ if [ ! -f "$ROS1_BAG" ]; then
 fi
 
 # -w /data/bags so Kalibr writes results-imucam-*.txt into the host bags dir.
+# MPLBACKEND=Agg: Kalibr's report step builds matplotlib figures even with
+# --dont-show-report; the default Tk backend then dies headless ("no $DISPLAY").
+# Agg renders the PDF without a window. We also don't let a report-only failure
+# abort the script -- the .txt/.yaml results are written before the report.
 echo "Running kalibr_calibrate_imu_camera in $KALIBR_IMG ..."
+set +e
 docker run --rm -t \
     -v "$BAGS":/data/bags \
     -v "$CFG":/data/cfg \
     -w /data/bags \
+    -e MPLBACKEND=Agg \
     "$KALIBR_IMG" \
     kalibr_calibrate_imu_camera \
         --bag    "/data/bags/$NAME.bag" \
@@ -61,15 +70,20 @@ docker run --rm -t \
         --imu    /data/cfg/kalibr_imu.yaml \
         --target /data/cfg/kalibr_aprilgrid.yaml \
         --dont-show-report
+set -e
 
 # Surface the result. Kalibr writes results-imucam-<bag>.txt in the work dir.
 RESULT=$(ls -t "$BAGS"/results-imucam-*.txt 2>/dev/null | head -1 || true)
 echo
-if [ -n "$RESULT" ] && grep -qi time_shift "$RESULT"; then
+if [ -n "$RESULT" ] && grep -qiE 'timeshift' "$RESULT"; then
     echo "=== Kalibr result: $RESULT ==="
-    grep -i "time_shift\|reprojection" "$RESULT" || true
+    grep -iE 'reprojection error \(cam0\) \[px\]' "$RESULT" || true
+    # The timeshift VALUE is on the line BELOW the label, so print both (-A1).
+    # (Do not confuse this with "time offset with respect to IMU0: 0.0", which
+    #  is IMU0 vs itself and is always 0 in a single-IMU rig.)
+    grep -iE -A1 'timeshift cam0 to imu0' "$RESULT" || true
     echo
-    echo ">>> Paste the time_shift_cam_imu value into:"
+    echo ">>> Paste the number BELOW 'timeshift cam0 to imu0' (t_imu = t_cam + shift) into:"
     echo "    docker-calib/config/time_sync.yaml -> cam_lidar_time_shift"
     echo "    then re-record with ros_bag_record.sh (image_restamp.py reloads it)."
 else

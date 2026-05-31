@@ -12,5 +12,6 @@
 #       new_lidar_stamp = host_stamp - coarse_offset + cam_lidar_time_shift
 #   (a positive value pushes the image later on the lidar timeline).
 #
-# Leave 0.0 until you have run Kalibr (see docker-calib/scripts/run_kalibr.sh).
-cam_lidar_time_shift: 0.0
+# From Kalibr (kalibr_run1): "cam0 to imu0 time (t_imu = t_cam + shift)".
+# Post-opt reprojection 0.42 px, gyro 0.005 rad/s, accel 0.077 m/s^2 -- good fit.
+cam_lidar_time_shift: -0.0811411186899

@@ -20,13 +20,19 @@ common:
   ros_driver_bug_fix: false
 
 extrin_calib:
-  # IMU-to-LiDAR (T, R). RoboSense's AIRY datasheet places the IMU at
-  # essentially the LiDAR origin with an identity rotation; if you have
-  # the exact mechanical offset from RoboSense, paste it here.
+  # IMU-to-LiDAR (T, R). The AIRY's built-in IMU is NOT axis-aligned with the
+  # LiDAR (the datasheet "identity" claim is wrong for this unit): at rest
+  # gravity sits on IMU +Y while the LiDAR floor/wall geometry shows LiDAR up
+  # is +Z, i.e. the IMU is rotated ~90 deg about X relative to the LiDAR.
+  # With identity, a yaw about true vertical (LiDAR +Z) was being applied as a
+  # rotation about LiDAR +Y, so the map swept into an arc under motion.
+  # This -90 deg-about-X rotation maps LiDAR +Z -> IMU +Y. If a residual
+  # yaw/flip remains, try the +90 deg variant [1,0,0, 0,0,-1, 0,1,0], or run a
+  # proper LiDAR-IMU extrinsic calibration to refine.
   extrinsic_T: [0.0, 0.0, 0.0]
-  extrinsic_R: [1, 0, 0,
-                0, 1, 0,
-                0, 0, 1]
+  extrinsic_R: [1,  0,  0,
+                0,  0,  1,
+                0, -1,  0]
 
   # Camera-to-LiDAR. From docker-calib/config/extrinsic.yaml (T_camera_lidar),
   # i.e. p_camera = Rcl @ p_lidar + Pcl. **Update these whenever you re-run
