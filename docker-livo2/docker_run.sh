@@ -56,6 +56,7 @@ exec docker run --rm -it \
     -e XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}" \
     -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
     -v "$HOST_DIR/bags":/data:rw \
+    -v "$HOST_DIR/output":/opt/catkin_ws/src/FAST-LIVO2/Log:rw \
     -v "$HOST_DIR/config":/opt/calib:rw \
     -v "$HOST_DIR/config/rsairy.yaml":/opt/catkin_ws/src/FAST-LIVO2/config/rsairy.yaml:ro \
     -v "$HOST_DIR/config/camera_fisheye_rsairy.yaml":/opt/catkin_ws/src/FAST-LIVO2/config/camera_fisheye_rsairy.yaml:ro \

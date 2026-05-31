@@ -5,9 +5,12 @@ Once docker-calib/config/lidar_config.yaml sets use_lidar_clock: true, the
 point cloud (/rslidar_points) and IMU (/rslidar_imu_data[_fixed]) carry the
 AIRY's internal hardware clock, which is NOT the host UNIX clock -- it can be a
 free-running sensor uptime (billions of seconds away). The USB camera
-(/image_raw, gscam2 with use_gst_timestamps:false) is still stamped with the
-host ROS wall clock. FAST-LIVO2 needs all three streams on one timeline, so the
-image stamps must be mapped onto the lidar clock.
+(/image_raw, gscam2 with use_gst_timestamps:true) is stamped with the per-frame
+GStreamer CAPTURE time (buffer PTS) mapped into the host ROS wall-clock domain.
+That is still the host clock (so the mapping below is unchanged), but it is
+SMOOTH -- earlier we used publish-time stamps (use_gst_timestamps:false) which
+arrived in bursts and ghosted the colorization. FAST-LIVO2 needs all three
+streams on one timeline, so the image stamps must be mapped onto the lidar clock.
 
 The mapping has two parts:
 

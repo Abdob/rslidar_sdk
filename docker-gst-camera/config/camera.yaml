@@ -12,4 +12,14 @@
     camera_name: "usb_cam"             # matches the name in intrinsics_ros.yaml
     camera_info_url: "file:///opt/calib/config/intrinsics_ros.yaml"
     preroll: false
-    use_gst_timestamps: false
+    # true: stamp each frame with the GStreamer buffer PTS (kernel capture time),
+    # mapped into the ROS clock domain by gscam2's time_offset_. This is SMOOTH.
+    # With false, gscam2 stamps node->now() at publish time, and the pipeline
+    # (tee/queue/fpsdisplaysink) delivers frames in bursts -> clustered stamps
+    # (measured std ~92% of the frame period, some frames sharing a stamp). That
+    # jitter rode through image_restamp.py onto the lidar clock and caused the
+    # FAST-LIVO2 colorization to ghost. Capture-time stamps fix it. NOTE: capture
+    # time is earlier than publish time by a ~constant pipeline latency, so the
+    # Kalibr cam_lidar_time_shift / img_time_offset must be re-tuned after this
+    # change (it is only a constant now that the jitter is gone).
+    use_gst_timestamps: true
