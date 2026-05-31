@@ -51,6 +51,7 @@ RUN . /opt/ros/humble/setup.sh && \
         --cmake-args \
             -DCMAKE_BUILD_TYPE=Release \
             -DENABLE_IMU_DATA_PARSE=ON \
+            -DPOINT_TYPE=XYZIRT \
             -DCMAKE_CXX_FLAGS="-include memory -include functional"
 
 # Calibration tools, launch files, and configs live in a bind-mountable dir so

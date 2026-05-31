@@ -15,7 +15,7 @@ lidar:
 
       min_distance: 0.2
       max_distance: 200
-      use_lidar_clock: true
+      use_lidar_clock: false
       dense_points: false       # leave NaNs in; Python tools already pass skip_nans=True
                                 # to pc2.read_points. Filtering in the driver thread
                                 # makes it miss UDP frames and drops the publish rate

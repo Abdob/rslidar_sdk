@@ -9,7 +9,10 @@
 common:
   img_topic: "/image_raw"           # raw RGB from docker-gst-camera
   lid_topic: "/rslidar_points"      # AIRY 10 Hz cloud, XYZIRT
-  imu_topic: "/rslidar_imu_data"    # AIRY built-in IMU, ~200 Hz
+  imu_topic: "/rslidar_imu_data_fixed"  # bridged from /rslidar_imu_data
+                                        # (g -> m/s^2, sensor-uptime ->
+                                        # ROS clock). See
+                                        # docker-calib/scripts/imu_bridge.py
   img_en: 1
   lidar_en: 1
   ros_driver_bug_fix: false
