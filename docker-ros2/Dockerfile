@@ -1,8 +1,12 @@
-FROM osrf/ros:humble-desktop
+# Multi-arch base (has linux/arm64) so this builds/runs natively on the DGX
+# Spark (aarch64). osrf/ros:humble-desktop is amd64-only and won't run here.
+# ros:humble is ros-base, so we add rviz2 explicitly below for humble_start.py.
+FROM ros:humble
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Build deps for rslidar_sdk + rs_driver
+# Build deps for rslidar_sdk + rs_driver, plus RViz2 (humble_start.py launches
+# an rviz2 node; the ros-base image doesn't ship it).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
@@ -13,6 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-colcon-common-extensions \
         ros-humble-rmw-cyclonedds-cpp \
         ros-humble-pcl-conversions \
+        ros-humble-rviz2 \
+        ros-humble-rviz-default-plugins \
     && rm -rf /var/lib/apt/lists/*
 
 # Colcon workspace under /opt/ros_ws
@@ -23,6 +29,15 @@ RUN git clone --depth=1 https://github.com/RoboSense-LiDAR/rslidar_msg.git
 
 # rslidar_sdk source from our build context (project root). Drop heavy/unused dirs.
 COPY src/        /opt/ros_ws/src/rslidar_sdk/src/
+
+# src/rs_driver is a git submodule and is NOT checked out in the build context
+# (the COPY above brings in an empty dir). Populate it from upstream at the
+# commit this repo pins, so the build is self-contained and arch-independent.
+RUN rm -rf /opt/ros_ws/src/rslidar_sdk/src/rs_driver && \
+    git clone https://github.com/RoboSense-LiDAR/rs_driver.git \
+        /opt/ros_ws/src/rslidar_sdk/src/rs_driver && \
+    git -C /opt/ros_ws/src/rslidar_sdk/src/rs_driver \
+        checkout --quiet 4eeadace465023db65a63fc8ef680dfaaca5812c
 COPY node/       /opt/ros_ws/src/rslidar_sdk/node/
 COPY launch/     /opt/ros_ws/src/rslidar_sdk/launch/
 COPY rviz/       /opt/ros_ws/src/rslidar_sdk/rviz/
