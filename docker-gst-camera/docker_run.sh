@@ -15,7 +15,11 @@ set -e
 HOST_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HOST_DIR/.." && pwd)"
 
-xhost +local:docker >/dev/null 2>&1 || true
+# Headless container: it only publishes /image_raw to ROS (fpsdisplaysink uses
+# fakesink). Deliberately NO DISPLAY / X11 mount -- on the DGX Spark, exposing an
+# X display routes nvvideoconvert's EGL init to Mesa's software Vulkan (ZINK),
+# which fails with VK_ERROR_INCOMPATIBLE_DRIVER and kills the pipeline (no
+# /image_raw). Without a display, EGL init no-ops and the GPU path runs fine.
 
 ARGS=("$@")
 case "${1:-}" in
@@ -36,10 +40,7 @@ exec docker run --rm -it \
     --net=host \
     --privileged \
     --gpus all \
-    -e DISPLAY="${DISPLAY:-:0}" \
-    -e XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}" \
     -e NVIDIA_DRIVER_CAPABILITIES=all \
-    -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
     -v /dev:/dev \
     -v "$REPO_ROOT/docker-calib/config":/opt/calib/config:ro \
     -v "$HOST_DIR/config":/opt/camera/config:rw \

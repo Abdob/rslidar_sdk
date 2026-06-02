@@ -39,7 +39,11 @@ _FPS_BRANCH = (
 GPU_PIPELINE = (
     "v4l2src device={device} ! "
     "image/jpeg,width={w},height={h},framerate={fps}/1 ! "
-    "nvjpegdec ! "                    # nvjpeg-backed MJPEG decode, output NVMM
+    "nvv4l2decoder ! "                # HW MJPEG decode (negotiates image/jpeg via
+                                      # caps). The Spark/SBSA DeepStream has no
+                                      # nvjpegdec, and nvv4l2decoder here has no
+                                      # mjpeg property -- caps alone select JPEG.
+                                      # Output is NV12 in NVMM.
     "nvvideoconvert ! "               # GPU NV12 → RGB, then transfer to system mem
     "video/x-raw,format=RGB ! "       # system memory (NVMM tag dropped) so
                                       # gscam2's appsink can consume it

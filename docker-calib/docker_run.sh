@@ -15,6 +15,10 @@ set -e
 
 HOST_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Bind-mount target for recorded bags; create it here so Docker doesn't
+# auto-create it as a root-owned directory.
+mkdir -p /home/wave/Documents/rslidar_sdk/bags
+
 xhost +local:docker >/dev/null 2>&1 || true
 
 # Dispatch convenience aliases.
@@ -50,6 +54,8 @@ exec docker run --rm -it \
     -e DISPLAY="${DISPLAY:-:0}" \
     -e XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}" \
     -e NVIDIA_DRIVER_CAPABILITIES=all \
+    -e NVIDIA_VISIBLE_DEVICES=all \
+    --gpus all \
     -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
     -v /dev:/dev \
     -v "$HOST_DIR/config":/opt/calib/config:rw \

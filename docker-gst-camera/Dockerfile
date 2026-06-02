@@ -1,12 +1,14 @@
 # GPU-accelerated MJPEG camera publisher for the AIRY+camera rig.
 #
-# Base is DeepStream 9.0 (matches docker-ds3d's base): brings nvjpeg, the
-# NVIDIA GStreamer plugins (nvv4l2decoder, nvvideoconvert) and CUDA runtime.
-# We add ROS 2 Humble on top, then build gscam2 from source — gscam2 takes
-# an arbitrary GStreamer pipeline string as a parameter and publishes the
-# decoded frames as sensor_msgs/Image + image_transport, which is exactly
-# what we want.
-FROM nvcr.io/nvidia/deepstream:9.0-triton-multiarch
+# Base is the DGX Spark build of DeepStream 8.0: brings nvjpeg, the NVIDIA
+# GStreamer plugins (nvjpegdec, nvvideoconvert) and CUDA runtime built for the
+# Spark's GB10 (Blackwell, arm64/sbsa). The generic 9.0-triton-multiarch tag is
+# not accessible/runnable here, and the SBSA/Jetson variants don't target GB10 —
+# this *-dgx-spark image is NVIDIA's image for this machine. Still Ubuntu 24.04
+# (Noble), so ROS 2 Jazzy below is unchanged. We add ROS on top, then build
+# gscam2 from source — it takes an arbitrary GStreamer pipeline string and
+# publishes the decoded frames as sensor_msgs/Image + image_transport.
+FROM nvcr.io/nvidia/deepstream:8.0-triton-dgx-spark
 
 ENV DEBIAN_FRONTEND=noninteractive
 
