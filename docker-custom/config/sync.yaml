@@ -1,0 +1,61 @@
+# Timing-sync experiment configuration.
+#
+# Workflow: translate the sensor rig back-and-forth in ONE dimension in front of
+# a wall with a checkerboard on it. record_sync_bag.sh captures the topics below;
+# extract_signals.py reduces each sensor to one scalar per sample; plot_sync.py
+# overlays them and marks the motion reversals.
+
+topics:
+  # gscam2 publishes only raw /image_raw (no image_transport compressed subtopic).
+  # extract_signals.py decodes raw Image (rgb8/bgr8/mono8) or CompressedImage, so
+  # if you later enable a compressed transport you can point this at it instead.
+  # NOTE: raw 1280x720 rgb8 @30Hz is ~80 MB/s -- a 60 s bag is ~5 GB.
+  image:       /image_raw
+  camera_info: /camera_info
+  cloud:       /rslidar_points
+  imu:         /rslidar_imu_data_fixed   # m/s^2, lidar-clock stamps
+
+# --- LiDAR: distance to the wall ---
+# Crop to a forward box around the wall, RANSAC-fit a plane, take its distance
+# from the sensor origin. AIRY frame: +Z forward, +X down, +Y lateral. Defaults
+# mirror docker-calib/config/target.yaml lidar_detect (board ~1 m away); widen
+# crop_xyz to match your actual wall distance / sweep range.
+lidar:
+  crop_xyz_min: [-0.8, -0.9, 0.5]
+  crop_xyz_max: [ 0.6,  0.9, 3.0]
+  plane_ransac_distance: 0.02     # m, inlier threshold
+  plane_min_inliers: 500          # skip frame if fewer inliers (bad fit)
+
+# --- Camera: checkerboard signal ---
+# Inner-corner counts (NOT squares): a board with 10x7 squares has 9x6 inner
+# corners. square_m is informational.
+# signal:
+#   scale -> apparent board size (RMS corner spread, px). Use for TOWARD/AWAY
+#            motion: the board grows/shrinks while its center barely moves.
+#            (scale ~ 1/distance, so it's inverse to the lidar signal -- fine,
+#            reversals are extrema either way.)
+#   u | v -> center pixel (horizontal | vertical). Use for SIDE-TO-SIDE motion.
+checkerboard:
+  cols: 9
+  rows: 6
+  square_m: 0.025
+  signal: scale
+  undistort: false                # raw pixels are fine for reversal timing
+
+# --- IMU: acceleration along the motion axis ---
+# axis: 'auto' picks the x/y/z channel with the largest variance over the bag;
+# or force 'x' | 'y' | 'z'. AIRY IMU axes follow the lidar frame.
+imu:
+  axis: auto
+
+# --- signal conditioning / reversal detection (plot_sync.py) ---
+# smooth_seconds: moving-average window in SECONDS (converted to samples per
+#   series, so the 200 Hz IMU is smoothed much more than the 10 Hz LiDAR).
+# min_reversal_sep_s: minimum spacing between detected reversals.
+# min_prominence_frac: a peak must rise/fall by at least this fraction of the
+#   signal's amplitude (p95-p5) to count -- rejects IMU noise wiggles. Raise it
+#   if a sensor still reports too many reversals; lower it if it misses real ones.
+analysis:
+  smooth_seconds: 0.3
+  min_reversal_sep_s: 0.5
+  min_prominence_frac: 0.25
