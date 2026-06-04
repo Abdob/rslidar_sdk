@@ -12,3 +12,6 @@ cmake-build-debug/
 version.h
 *.pb.cc
 *.pb.h
+
+# Recorded bags + extracted signals/plots from docker-custom experiments
+docker-custom/bags/
