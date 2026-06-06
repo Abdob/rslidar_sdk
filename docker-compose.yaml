@@ -107,6 +107,7 @@ services:
       - ./docker-calib/scripts:/opt/calib/scripts:ro
       - ./docker-calib/launch:/opt/calib/launch:ro
       - ./docker-calib/rviz:/opt/calib/rviz:ro
+      - ./docker-calib/captures:/opt/calib/captures:rw
     command: ros2 launch /opt/calib/launch/sensors.launch.py
 
   # Fisheye chessboard intrinsic calibrator. Uses the camera service for
@@ -154,6 +155,7 @@ services:
       - ./docker-calib/scripts:/opt/calib/scripts:ro
       - ./docker-calib/launch:/opt/calib/launch:ro
       - ./docker-calib/rviz:/opt/calib/rviz:ro
+      - ./docker-calib/captures:/opt/calib/captures:rw
     command: ros2 launch /opt/calib/launch/extrinsic.launch.py
 
   # Live colorized cloud publisher + RViz.
@@ -179,4 +181,5 @@ services:
       - ./docker-calib/scripts:/opt/calib/scripts:ro
       - ./docker-calib/launch:/opt/calib/launch:ro
       - ./docker-calib/rviz:/opt/calib/rviz:ro
+      - ./docker-calib/captures:/opt/calib/captures:rw
     command: ros2 launch /opt/calib/launch/colorize.launch.py

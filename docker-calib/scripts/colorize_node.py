@@ -20,11 +20,20 @@ For every incoming cloud:
      float32 field (RViz/PCL convention) and republish.
 
 Topic out: /colored_points (frame_id matches the input cloud's frame_id).
+
+Capture:
+  A preview window shows the live camera feed.
+  Press SPACE or C to save the current image + LiDAR frame to:
+    /opt/calib/captures/<YYYYMMDD_HHMMSS>/
+        image.png
+        lidar.pcd   (binary PCD v0.7, XYZI float32)
 """
 
 import argparse
-import struct
+import datetime
+import os
 import threading
+import time
 
 import cv2
 import numpy as np
@@ -34,8 +43,9 @@ from cv_bridge import CvBridge
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image, PointCloud2, PointField
-from sensor_msgs_py import point_cloud2 as pc2
 from std_msgs.msg import Header
+
+CAPTURES_DIR = "/opt/calib/captures"
 
 
 def pack_rgb_float(rgb_u8: np.ndarray) -> np.ndarray:
@@ -46,6 +56,51 @@ def pack_rgb_float(rgb_u8: np.ndarray) -> np.ndarray:
     b = rgb_u8[:, 2].astype(np.uint32)
     packed = (r << 16) | (g << 8) | b
     return packed.view(np.float32).copy()   # copy: ensure contiguous, writable
+
+
+def _write_pcd(path: str, msg: PointCloud2) -> int:
+    """Write a PointCloud2 message to a binary PCD v0.7 file. Returns point count."""
+    offsets = {f.name: f.offset for f in msg.fields}
+    has_i = "intensity" in offsets
+    field_names = ["x", "y", "z", "intensity"] if has_i else ["x", "y", "z"]
+    cols = 4 if has_i else 3
+
+    # Build a structured dtype that reads only the fields we want, all as float32.
+    # Avoids read_points_numpy which asserts all fields share the same datatype
+    # (rslidar clouds have mixed types: float32 xyz/intensity, uint16 ring, etc.).
+    dt = np.dtype({
+        "names":   field_names,
+        "formats": [np.float32] * len(field_names),
+        "offsets": [offsets[n] for n in field_names],
+        "itemsize": msg.point_step,
+    })
+    raw = np.frombuffer(msg.data, dtype=dt, count=msg.width * msg.height)
+    pts = np.column_stack([raw[n] for n in field_names]).astype(np.float32)
+    finite = np.isfinite(pts[:, :3]).all(axis=1)
+    pts = pts[finite]
+
+    n = len(pts)
+    fields  = "x y z intensity" if has_i else "x y z"
+    sizes   = "4 4 4 4"         if has_i else "4 4 4"
+    types   = "F F F F"         if has_i else "F F F"
+    counts  = "1 1 1 1"         if has_i else "1 1 1"
+    header = (
+        "# .PCD v0.7 - Point Cloud Data\n"
+        "VERSION 0.7\n"
+        f"FIELDS {fields}\n"
+        f"SIZE {sizes}\n"
+        f"TYPE {types}\n"
+        f"COUNT {counts}\n"
+        f"WIDTH {n}\n"
+        "HEIGHT 1\n"
+        "VIEWPOINT 0 0 0 1 0 0 0\n"
+        f"POINTS {n}\n"
+        "DATA binary\n"
+    )
+    with open(path, "wb") as f:
+        f.write(header.encode("ascii"))
+        f.write(pts[:, :cols].tobytes())
+    return n
 
 
 class Colorizer(Node):
@@ -62,16 +117,36 @@ class Colorizer(Node):
         self.lock = threading.Lock()
         self.latest_img: np.ndarray | None = None
         self.latest_img_size: tuple[int, int] | None = None  # (w, h)
+        self.latest_cloud_msg: PointCloud2 | None = None
+
+        # Session capture directory: one timestamped folder per run.
+        session_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._session_dir = os.path.join(CAPTURES_DIR, session_ts)
+        os.makedirs(self._session_dir, exist_ok=True)
+
+        # Flash overlay: show "SAVED!" for this many seconds after a capture.
+        self._flash_until: float = 0.0
+        self._capture_count: int = 0
 
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         self.create_subscription(Image,       args.image_topic, self._on_image, 10)
         self.create_subscription(PointCloud2, args.cloud_topic, self._on_cloud, qos)
         self.pub = self.create_publisher(PointCloud2, args.out_topic, 10)
 
+        # 30 Hz timer drives the preview window and keypress detection.
+        self.create_timer(1.0 / 30.0, self._tick)
+
+        cv2.namedWindow("colorize | SPACE or C to capture", cv2.WINDOW_NORMAL)
+
         self.get_logger().info(
             f"Colorizer ready  in: {args.cloud_topic} + {args.image_topic}  "
             f"out: {args.out_topic}  fisheye={fisheye}")
+        self.get_logger().info(
+            f"Session dir: {self._session_dir}")
+        self.get_logger().info(
+            "Preview window open — press SPACE or C to capture a frame.")
 
+    # ------------------------------------------------------------------
     def _on_image(self, msg: Image):
         try:
             img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
@@ -84,10 +159,11 @@ class Colorizer(Node):
 
     def _on_cloud(self, msg: PointCloud2):
         with self.lock:
+            self.latest_cloud_msg = msg
             img = None if self.latest_img is None else self.latest_img
             size = self.latest_img_size
         if img is None:
-            return  # no camera frame yet, just drop this cloud
+            return
 
         # Read x,y,z as a single (N,3) array. Bypass pc2.read_points (per-point
         # Python loop, ~150 ms on 50k points) by reinterpreting the raw byte
@@ -176,6 +252,46 @@ class Colorizer(Node):
         out.data = cloud_struct.tobytes()
         self.pub.publish(out)
 
+    # ------------------------------------------------------------------
+    def _tick(self):
+        """30 Hz: refresh preview window and check for keypresses."""
+        with self.lock:
+            display = self.latest_img.copy() if self.latest_img is not None else None
+
+        if display is not None:
+            cv2.putText(display, "SPACE / C : capture", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 220, 0), 2, cv2.LINE_AA)
+            if time.monotonic() < self._flash_until:
+                cv2.putText(display, f"SAVED  {self._capture_count - 1:03d}", (10, 75),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 220, 0), 3, cv2.LINE_AA)
+            cv2.imshow("colorize | SPACE or C to capture", display)
+
+        key = cv2.waitKey(1) & 0xFF
+        if key in (ord(" "), ord("c"), ord("C")):
+            self._save_capture()
+
+    def _save_capture(self):
+        with self.lock:
+            img = self.latest_img.copy() if self.latest_img is not None else None
+            cloud_msg = self.latest_cloud_msg
+
+        if img is None or cloud_msg is None:
+            self.get_logger().warn(
+                "Capture requested but image or cloud not yet available — try again.")
+            return
+
+        idx = f"{self._capture_count:03d}"
+        img_path = os.path.join(self._session_dir, f"{idx}_image.png")
+        pcd_path = os.path.join(self._session_dir, f"{idx}_lidar.pcd")
+
+        cv2.imwrite(img_path, img)
+        n_pts = _write_pcd(pcd_path, cloud_msg)
+
+        self._capture_count += 1
+        self._flash_until = time.monotonic() + 1.5
+        self.get_logger().info(
+            f"Capture {idx} saved to {self._session_dir}  ({n_pts} points)")
+
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
@@ -206,6 +322,7 @@ def main():
     finally:
         node.destroy_node()
         rclpy.shutdown()
+        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":

@@ -15,9 +15,9 @@ set -e
 
 HOST_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Bind-mount target for recorded bags; create it here so Docker doesn't
-# auto-create it as a root-owned directory.
+# Bind-mount targets; create here so Docker doesn't auto-create them as root-owned.
 mkdir -p /home/wave/Documents/rslidar_sdk/bags
+mkdir -p "$HOST_DIR/captures"
 
 xhost +local:docker >/dev/null 2>&1 || true
 
@@ -65,5 +65,6 @@ exec docker run --rm -it \
     -v "$HOST_DIR/launch":/opt/calib/launch:ro \
     -v "$HOST_DIR/rviz":/opt/calib/rviz:ro \
     -v /home/wave/Documents/rslidar_sdk/bags:/opt/calib/bags:rw \
+    -v "$HOST_DIR/captures":/opt/calib/captures:rw \
     --name rslidar-airy-calib \
     rslidar-airy-calib "${ARGS[@]}"
