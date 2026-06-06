@@ -16,10 +16,18 @@ Single-shot procedure:
 Output (extrinsic.yaml): T_camera_lidar — a 4x4 matrix such that
     p_camera = R @ p_lidar + t
 
+Multi-pose: each `c` adds the current board view as one pose, then the extrinsic
+is re-solved GLOBALLY over every accumulated pose (one Kabsch over all hole
+correspondences). Capture the board at many depths / tilts / positions (~10-20)
+so the points are no longer coplanar and per-hole noise averages out -- this is
+what drives the residual from cm down to mm. Per-pose residuals under the global
+fit are reported so you can spot and `u`ndo a bad capture.
+
 Keys (live window):
-  c   capture & solve
-  s   save the last solve result to extrinsic.yaml
-  r   reset capture (free up memory)
+  c   capture the current board pose, add it, and re-solve globally
+  u   undo: remove the last captured pose and re-solve
+  s   save the global solve to extrinsic.yaml
+  r   reset: drop all captured poses
   q   quit
 """
 
@@ -590,7 +598,12 @@ class ExtrinsicCalibrator(Node):
         self.create_subscription(Image,        args.image_topic, self._on_image, 10)
         self.create_subscription(PointCloud2, args.cloud_topic, self._on_cloud, qos)
 
-        self.last_result = None    # (R, t, rms, n_correspondences)
+        # multi-pose accumulation: each capture appends one pose's 4 ordered
+        # hole correspondences; the extrinsic is re-solved globally over all of
+        # them (see capture_and_add / solve_global).
+        self.captures: list[dict] = []   # [{"lidar": (4,3), "cam": (4,3), "pose_rms"}]
+        self.last_capture = None         # debug images from the most recent capture
+        self.global_result = None        # {"R","t","rms","per_pose","n"}
 
     def _on_image(self, msg: Image):
         try:
@@ -614,8 +627,9 @@ class ExtrinsicCalibrator(Node):
             if len(self.cloud_buf) > self.target.accumulate_frames:
                 self.cloud_buf.pop(0)
 
-    # --- core: capture + solve ---
-    def solve_one(self):
+    # --- core: capture one pose, then re-solve over all poses ---
+    def capture_and_add(self):
+        """Detect the board in the current frame and add it as one pose."""
         with self.lock:
             img = None if self.latest_img is None else self.latest_img.copy()
             clouds = list(self.cloud_buf)
@@ -630,12 +644,9 @@ class ExtrinsicCalibrator(Node):
         cloud = np.vstack(clouds)
         holes_lidar, lidar_dbg = self.lidar_det.detect(cloud)
 
-        # Show debug images even on failure so the user can see *why* it failed.
-        self.last_result = {
-            "R": None, "t": None, "rms": float("inf"), "perm": None,
-            "holes_cam": holes_cam, "holes_lidar_ordered": None,
-            "cam_overlay": cam_overlay, "lidar_dbg": lidar_dbg,
-        }
+        # Keep debug images even on failure so the user can see *why* it failed.
+        self.last_capture = {"cam_overlay": cam_overlay, "lidar_dbg": lidar_dbg,
+                             "ok": False}
 
         if holes_cam is None:
             self.get_logger().error("camera: failed to recover board pose "
@@ -647,42 +658,90 @@ class ExtrinsicCalibrator(Node):
                                     "a wall/floor; tighten crop_xyz_min/max)")
             return
 
-        # Brute-force the best permutation (24).
+        # Per-shot permutation: the camera holes are always in fixed board order,
+        # so brute-force the 24 orderings of the 4 LiDAR holes to find which
+        # LiDAR hole corresponds to which board hole for THIS view.
         best = None
         for perm in itertools.permutations(range(4)):
             P = holes_lidar[list(perm)]
-            R, t, rms = kabsch(P, holes_cam)
+            _R, _t, rms = kabsch(P, holes_cam)
             if best is None or rms < best[2]:
-                best = (R, t, rms, perm)
-        R, t, rms, perm = best
-        ex, ey, ez = rotmat_to_euler_xyz(R)
-        self.get_logger().info(
-            f"solved: rms={rms*1000:.2f}mm, perm={perm}, "
-            f"trans={t}, euler_xyz_deg=({ex:.2f},{ey:.2f},{ez:.2f})")
+                best = (_R, _t, rms, perm)
+        _, _, pose_rms, perm = best
+        lidar_ordered = holes_lidar[list(perm)]   # reordered into board order
 
-        self.last_result = {
-            "R": R, "t": t, "rms": rms, "perm": perm,
-            "holes_cam": holes_cam, "holes_lidar_ordered": holes_lidar[list(perm)],
-            "cam_overlay": cam_overlay, "lidar_dbg": lidar_dbg,
-        }
+        self.captures.append({
+            "lidar": lidar_ordered, "cam": holes_cam,
+            "pose_rms": float(pose_rms), "perm": perm,
+        })
+        self.last_capture["ok"] = True
+        self.get_logger().info(
+            f"added pose #{len(self.captures)} (per-pose rms={pose_rms*1000:.1f} mm, "
+            f"perm={perm})")
+        self.solve_global()
+
+    def solve_global(self):
+        """Re-solve the extrinsic over EVERY accumulated pose at once."""
+        if not self.captures:
+            self.global_result = None
+            return
+        P = np.vstack([c["lidar"] for c in self.captures])   # (4*N, 3) LiDAR
+        Q = np.vstack([c["cam"] for c in self.captures])     # (4*N, 3) camera
+        R, t, rms = kabsch(P, Q)
+
+        # Residual of each pose under the single global transform (mm) — a high
+        # one flags a bad detection worth `u`ndoing.
+        per_pose = []
+        for c in self.captures:
+            d = c["cam"] - (c["lidar"] @ R.T + t)
+            per_pose.append(float(np.sqrt((d * d).sum() / len(d))))
+
+        self.global_result = {"R": R, "t": t, "rms": rms,
+                              "per_pose": per_pose, "n": len(self.captures)}
+        ex, ey, ez = rotmat_to_euler_xyz(R)
+        worst = max(per_pose)
+        self.get_logger().info(
+            f"GLOBAL: poses={len(self.captures)} pts={len(P)} "
+            f"rms={rms*1000:.2f}mm worst-pose={worst*1000:.1f}mm  "
+            f"euler_xyz_deg=({ex:.2f},{ey:.2f},{ez:.2f}) t={np.round(t,4).tolist()}")
+
+    def undo(self):
+        """Drop the most recently captured pose and re-solve."""
+        if not self.captures:
+            self.get_logger().info("nothing to undo")
+            return
+        self.captures.pop()
+        self.get_logger().info(f"removed last pose ({len(self.captures)} remaining)")
+        self.solve_global()
+
+    def reset(self):
+        self.captures.clear()
+        self.global_result = None
+        with self.lock:
+            self.cloud_buf.clear()
+        self.get_logger().info("cleared all captured poses")
 
     def save(self):
-        if self.last_result is None or self.last_result["R"] is None:
-            self.get_logger().error("nothing valid to save — last capture didn't solve")
+        if self.global_result is None:
+            self.get_logger().error("nothing to save — no valid poses captured yet")
             return
-        R = self.last_result["R"]; t = self.last_result["t"]
+        R = self.global_result["R"]; t = self.global_result["t"]
         T = np.eye(4); T[:3, :3] = R; T[:3, 3] = t
         out = {
             "T_camera_lidar": T.tolist(),
             "translation_xyz_m": t.tolist(),
             "rotation_euler_xyz_deg": list(rotmat_to_euler_xyz(R)),
-            "rms_residual_m": float(self.last_result["rms"]),
-            "correspondence_permutation": list(self.last_result["perm"]),
-            "comment": "p_camera = R @ p_lidar + t",
+            "rms_residual_m": float(self.global_result["rms"]),
+            "num_poses": int(self.global_result["n"]),
+            "num_correspondences": int(self.global_result["n"] * 4),
+            "per_pose_rms_m": [float(x) for x in self.global_result["per_pose"]],
+            "comment": "p_camera = R @ p_lidar + t  (multi-pose global Kabsch)",
         }
         with open(self.args.out, "w") as f:
             yaml.safe_dump(out, f, sort_keys=False)
-        self.get_logger().info(f"wrote {self.args.out}")
+        self.get_logger().info(
+            f"wrote {self.args.out}  ({self.global_result['n']} poses, "
+            f"rms={self.global_result['rms']*1000:.2f} mm)")
 
     def loop(self):
         cv2.namedWindow("camera",    cv2.WINDOW_NORMAL); cv2.resizeWindow("camera", 960, 540)
@@ -694,34 +753,39 @@ class ExtrinsicCalibrator(Node):
             if img is None:
                 time.sleep(0.02)
                 continue
-            cv2.putText(img, "c=capture/solve  s=save  r=reset  q=quit",
+            cv2.putText(img, "c=capture+add  u=undo  s=save  r=reset  q=quit",
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            if self.last_result is not None:
-                if self.last_result["R"] is None:
-                    msg = "last capture: FAILED (see lidar dbg)"
-                    color = (0, 0, 255)
-                else:
-                    msg = f"last RMS = {self.last_result['rms']*1000:.2f} mm"
-                    color = (0, 200, 255)
-                cv2.putText(img, msg, (10, 60),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-                # Show the camera overlay with detected holes as the camera panel.
-                cv2.imshow("camera", self.last_result["cam_overlay"])
-                cv2.imshow("lidar dbg", self.last_result["lidar_dbg"])
+            # Running global-solve status across all captured poses.
+            if self.global_result is not None:
+                gr = self.global_result
+                msg = (f"poses={gr['n']}  global RMS={gr['rms']*1000:.2f} mm  "
+                       f"worst-pose={max(gr['per_pose'])*1000:.1f} mm")
+                color = (0, 200, 255)
+            else:
+                msg = f"poses={len(self.captures)}  (capture some board views)"
+                color = (0, 200, 255)
+            cv2.putText(img, msg, (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+            # Show the most recent capture's overlays (or the live image).
+            if self.last_capture is not None:
+                if not self.last_capture["ok"]:
+                    cv2.putText(img, "last capture FAILED (see lidar dbg)",
+                                (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                cv2.imshow("camera", self.last_capture["cam_overlay"])
+                cv2.imshow("lidar dbg", self.last_capture["lidar_dbg"])
             else:
                 cv2.imshow("camera", img)
             k = cv2.waitKey(1) & 0xFF
             if k == ord('q'):
                 break
             elif k == ord('c'):
-                self.solve_one()
+                self.capture_and_add()
+            elif k == ord('u'):
+                self.undo()
             elif k == ord('s'):
                 self.save()
             elif k == ord('r'):
-                self.last_result = None
-                with self.lock:
-                    self.cloud_buf.clear()
-                self.get_logger().info("buffers cleared")
+                self.reset()
         cv2.destroyAllWindows()
 
 

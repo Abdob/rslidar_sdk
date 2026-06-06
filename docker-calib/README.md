@@ -199,17 +199,49 @@ Then run:
 ./docker-calib/docker_run.sh extrinsic
 ```
 
+### Multi-pose calibration (do this — it's the accuracy lever)
+
+The solver is **multi-pose**: each `c` adds the current board view as one *pose*
+and re-solves the extrinsic over **every** accumulated pose at once (a single
+Kabsch over all hole correspondences).
+
+Why this matters: the 4 holes are coplanar (they lie on the board), so a
+*single* capture under-constrains the out-of-plane rotation and is only valid at
+that one board distance/orientation. Extrapolated to other depths (e.g. a wall
+2 m away) a single-shot solve drifts by centimeters — visible as colour ghosting
+when you merge clouds taken from different viewpoints. Capturing the board at
+many depths **and tilts** breaks the coplanarity and averages out per-hole LiDAR
+noise, taking the residual from ~cm to single-digit mm.
+
+Rule of thumb (validated in simulation with 1.5 cm per-hole noise): one coplanar
+shot ≈ 9 mm error at 2 m; 12 varied poses ≈ 0.8 mm.
+
+**Keys (live window):**
+
+| Key | Action |
+|-----|--------|
+| `c` | capture the current board view, add it as a pose, re-solve globally |
+| `u` | undo — remove the last captured pose and re-solve (drop a bad detection) |
+| `s` | save the global solve to `config/extrinsic.yaml` |
+| `r` | reset — drop all captured poses |
+| `q` | quit |
+
 Procedure:
-1. Hold the board flat, ~1.5–2.5 m from the LiDAR, fully visible to both
+1. Hold the board flat, ~1.0–2.5 m from the LiDAR, fully visible to both
    sensors. Wait a few seconds for cloud frames to accumulate.
-2. Press `c`. The tool:
+2. Press `c` to add the pose. The tool:
    - Detects ArUco markers, solves fisheye PnP for the board pose, computes
      hole centers in the **camera** frame.
    - Crops cloud, RANSACs the plane, finds 4 low-density regions, computes
      hole centers in the **LiDAR** frame.
-   - Brute-forces all 24 permutations of LiDAR-to-camera hole pairings,
-     keeps the one with the smallest Kabsch residual.
-3. Inspect:
+   - Brute-forces all 24 permutations of LiDAR-to-camera hole pairings for
+     *this* view, then re-solves the extrinsic over all poses so far.
+3. **Move the board and repeat — aim for 10–20 poses.** Vary it like the
+   intrinsic stage: change the **depth** (1–2.5 m), slide it **left/right/up/
+   down**, and crucially **tilt** it (±20–35° in pitch and yaw) between
+   captures. Pure sideways translation at one orientation barely helps; tilt +
+   depth variation is what conditions the solve.
+4. Inspect after each capture:
    - **Camera window.** ArUco IDs overlaid on each marker, plus a yellow
      board outline and 4 green circles where the solver thinks the holes
      project. The green circles must sit inside the actual physical holes
@@ -233,27 +265,57 @@ Procedure:
      - `candidates` 4–8 (real holes + a couple of scan-ring artifacts).
      - `selected = 4`.
      If anything is 0, the failure stage is right there.
-   - **Terminal log:**
+   - **Terminal log.** Each capture prints its own per-pose residual and the
+     re-solved global fit:
      ```
-     solved: rms=24.86mm  perm=(3,0,2,1)
-             trans=[-0.001 -0.097 -0.044]
-             euler_xyz_deg=(0.41,-1.28,88.61)
+     added pose #7 (per-pose rms=6.1 mm, perm=(3,0,2,1))
+     GLOBAL: poses=7 pts=28 rms=4.82mm worst-pose=8.9mm  euler_xyz_deg=(0.41,-1.28,88.61) t=[-0.001,-0.097,-0.044]
      ```
      Sanity checks:
-     - **RMS** under ~30 mm is good, 30–60 mm is usable, > 60 mm means
-       something's drifting (re-tune or recapture).
-     - **`trans[1]`** should roughly match your measured LiDAR↔camera
-       vertical offset (here ~10 cm → -0.10 m in the camera frame).
-     - **`trans[2]`** should be a few cm at most. If it lands near ±1 m,
-       the brute-force Kabsch landed on the **180° mirror** of the true
-       solution (the hole rectangle has that symmetry). Re-capture — most
-       runs will pick the correct side. Save only when this looks right.
-4. Press `s` to save. Writes `config/extrinsic.yaml`.
+     - **global RMS** falls as you add good poses — aim for **single-digit mm**
+       (the old single-shot solve sat around 25 mm). 5–15 mm is usable; if it
+       won't drop below ~15 mm, your hole detections are noisy (see the dbg
+       panel) or you haven't varied the board enough.
+     - **`worst-pose`** flags the least-consistent capture. If one pose is far
+       above the rest, press `u` to drop it and the fit re-solves without it.
+     - **`t[1]`** should roughly match your measured LiDAR↔camera vertical
+       offset (here ~10 cm → -0.10 m in the camera frame).
+     - **`t[2]`** should be a few cm at most. If it lands near ±1 m, a capture
+       hit the **180° mirror** of the true solution (the hole rectangle has that
+       symmetry); `u`ndo that pose and recapture.
+5. Press `s` to save once the global RMS is low and stable. Writes
+   `config/extrinsic.yaml` with `num_poses`, `num_correspondences`, and
+   `per_pose_rms_m` alongside the transform so the result is auditable.
 
-Move the board to 2–3 different positions and re-solve to check consistency.
-If RMS jumps around or holes get detected in wrong places, re-tune
-`crop_xyz_*`, `plane_ransac_distance`, or `hole_density_threshold` in
-[config/target.yaml](config/target.yaml).
+If RMS won't drop or holes get detected in wrong places, re-tune `crop_xyz_*`,
+`plane_ransac_distance`, or `hole_density_threshold` in
+[config/target.yaml](config/target.yaml), and use `u` to discard the poses that
+spiked `worst-pose`.
+
+### Running with custom arguments
+
+`docker_run.sh extrinsic` launches the tool with defaults (topics `/image_raw`
+and `/rslidar_points`, configs under `/opt/calib/config/`). To override anything
+— different topics, a non-default target/intrinsics file, or writing the result
+elsewhere — run the script directly inside the container instead of the launch:
+
+```
+# sensors already up via:  ./docker-calib/docker_run.sh sensors
+./docker-calib/docker_exec.sh python3 /opt/calib/scripts/calibrate_extrinsic.py \
+    --image_topic /image_raw \
+    --cloud_topic /rslidar_points \
+    --target      /opt/calib/config/target.yaml \
+    --intrinsics  /opt/calib/config/intrinsics.yaml \
+    --out         /opt/calib/config/extrinsic.yaml
+```
+
+| Argument | Default | Purpose |
+|----------|---------|---------|
+| `--image_topic` | `/image_raw` | camera image topic |
+| `--cloud_topic` | `/rslidar_points` | LiDAR PointCloud2 topic |
+| `--target` | `/opt/calib/config/target.yaml` | board geometry + LiDAR-detect tuning |
+| `--intrinsics` | `/opt/calib/config/intrinsics.yaml` | fisheye K/D from Stage 1 |
+| `--out` | `/opt/calib/config/extrinsic.yaml` | where the solved transform is written |
 
 ## Stage 3 — Live colorized point cloud
 
@@ -369,7 +431,7 @@ baked into the recorded stamps — don't set it again there or it double-counts)
 | [config/intrinsics.yaml](config/intrinsics.yaml) | **Generated** by Stage 1 |
 | [config/extrinsic.yaml](config/extrinsic.yaml) | **Generated** by Stage 2 |
 | [scripts/calibrate_intrinsic.py](scripts/calibrate_intrinsic.py) | Fisheye chessboard tool |
-| [scripts/calibrate_extrinsic.py](scripts/calibrate_extrinsic.py) | ArUco PnP + plane/hole RANSAC + Kabsch solver |
+| [scripts/calibrate_extrinsic.py](scripts/calibrate_extrinsic.py) | ArUco PnP + plane/hole RANSAC + **multi-pose** global Kabsch solver |
 | [scripts/colorize_node.py](scripts/colorize_node.py) | Live colorized PointCloud2 publisher |
 | [rviz/colorize.rviz](rviz/colorize.rviz) | RViz2 preset (Colored Cloud + camera image) |
 
@@ -390,9 +452,12 @@ baked into the recorded stamps — don't set it again there or it double-counts)
   or the density threshold is wrong. Inspect the **lidar dbg** panel — the
   middle (interior mask) panel must look like a filled rectangle covering
   the board.
-- **Colorized cloud is sparse or misaligned:** re-run the extrinsic stage
-  with the board at a different distance/angle and check RMS. Also confirm
-  the camera image is sharp (autofocus off, `autoexposure: true` is fine).
+- **Colorized cloud is sparse or misaligned:** the extrinsic is the usual
+  cause. Re-run Stage 2 and capture **more poses at varied depths and tilts**
+  (10–20) until the global RMS is single-digit mm — a single-shot solve drifts
+  at distances away from the board. `u`ndo any pose that spikes `worst-pose`.
+  Also confirm the camera image is sharp (autofocus off, `autoexposure: true`
+  is fine).
 - **Record script aborts: "ABORT: not all inputs are live":** a required topic
   isn't publishing. Start the camera (`docker-gst-camera/docker_run.sh`) and the
   sensors (`docker-calib/docker_run.sh sensors`) **before** recording — the
@@ -411,5 +476,8 @@ baked into the recorded stamps — don't set it again there or it double-counts)
 
 Target-detection algorithm follows
 [hku-mars/FAST-Calib](https://github.com/hku-mars/FAST-Calib). The 4-hole +
-4-ArUco board is the minimum geometric configuration that fully constrains
-SE(3) in a single shot — 4 non-collinear 3D-3D point pairs.
+4-ArUco board gives 4 non-collinear 3D-3D point pairs per view — enough to solve
+SE(3) from a single shot, but because those 4 points are coplanar a single shot
+is poorly conditioned out-of-plane. This tool therefore accumulates several
+board poses (varied depth + tilt) and solves one global Kabsch over all of them,
+which is what drives the residual down to mm.
