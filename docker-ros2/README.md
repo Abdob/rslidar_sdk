@@ -6,8 +6,7 @@ RViz2, preset RViz config) is launched by one command.
 
 ## What it builds
 
-- Base: `ros:humble` (Ubuntu 22.04, multi-arch incl. arm64 for the DGX Spark;
-  RViz2 added via apt)
+- Base: `osrf/ros:humble-desktop` (Ubuntu 22.04, x86_64; bundles RViz2)
 - Colcon workspace at `/opt/ros_ws` with two packages:
   - `rslidar_msg` — cloned from
     [github.com/RoboSense-LiDAR/rslidar_msg](https://github.com/RoboSense-LiDAR/rslidar_msg)
@@ -18,8 +17,8 @@ RViz2, preset RViz config) is launched by one command.
 ## Prereqs
 
 - Docker
-- AIRY at `192.168.0.200`, reachable from the DGX Spark host (`192.168.0.199`),
-  with the LiDAR's **destination IP (`DstIp`) set to `192.168.0.199`** in its web
+- AIRY at `192.168.0.200`, reachable from the host (`192.168.0.199`),
+  with the LiDAR's **destination IP (`DstIp`) set to `192.168.1.135`** in its web
   UI (http://192.168.0.200 → Setting). If `DstIp` points elsewhere the driver
   logs `ERRCODE_MSOPTIMEOUT` and no cloud appears. See
   [../docker/README.md](../docker/README.md).
@@ -79,7 +78,7 @@ ros2 topic hz /rslidar_points
 - **No point cloud appearing, no error:** check `ros2 topic hz /rslidar_points`
   reports >0 Hz. If 0 Hz, the driver isn't receiving UDP — verify with
   `tcpdump host 192.168.0.200 and udp` on the host. The AIRY's destination IP
-  must be set to the host (`192.168.0.199`).
+  must be set to the host (`192.168.1.135`).
 - **Build fails on missing `<memory>`:** the Dockerfile passes
   `-DCMAKE_CXX_FLAGS="-include memory -include functional"` to colcon to
   work around vendored `rs_driver` headers that use `std::shared_ptr`

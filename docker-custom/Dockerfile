@@ -10,13 +10,12 @@ FROM rslidar-airy-calib
 ENV DEBIAN_FRONTEND=noninteractive
 
 # --- CUDA 13.0 toolkit (nvcc) ---
-# The DGX Spark's GB10 is compute capability 12.1 (sm_121), which only CUDA 13.x
-# can target -- CUDA 12.x cannot. The base is Ubuntu 22.04 arm64, so we use the
-# ubuntu2204/sbsa repo. This installs the toolkit (nvcc, cudart, headers) only;
-# the DRIVER (libcuda) is injected at runtime by `--gpus all`, so the toolkit
-# version (13.0) just needs to be <= the host driver's CUDA (13.0 here).
+# The base is Ubuntu 22.04 x86_64, so we use the ubuntu2204/x86_64 repo. This
+# installs the toolkit (nvcc, cudart, headers) only; the DRIVER (libcuda) is
+# injected at runtime by `--gpus all`, so the toolkit version (13.0) just needs
+# to be <= the host driver's CUDA. CUDA 13.x targets Turing (sm_75) and newer.
 RUN curl -fsSL -o /tmp/cuda-keyring.deb \
-        https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/sbsa/cuda-keyring_1.1-1_all.deb \
+        https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb \
     && dpkg -i /tmp/cuda-keyring.deb \
     && rm /tmp/cuda-keyring.deb \
     && apt-get update && apt-get install -y --no-install-recommends \

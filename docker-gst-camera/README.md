@@ -22,7 +22,7 @@ v4l2src device=/dev/video0
 image/jpeg, 1280x720, 30/1
    │
    ▼  ── GPU pipeline (use_gpu:=true, default) ──────────
-nvv4l2decoder mjpeg=1        nvjpeg-backed MJPEG decode, NVMM memory
+nvjpegdec                    nvjpeg-backed MJPEG decode, NVMM memory
    │
 nvvideoconvert               NV12 → BGR, still on GPU
    │
@@ -111,7 +111,7 @@ through `ros1_bridge`, same as before.
 
 ## Troubleshooting
 
-- **`Failed to load plugin nvv4l2decoder`**: NVIDIA container toolkit not
+- **`Failed to load plugin nvjpegdec`**: NVIDIA container toolkit not
   set up. `docker info | grep -i runtime` should list `nvidia`. Install
   with `sudo apt install nvidia-container-toolkit && sudo systemctl
   restart docker`.
@@ -120,7 +120,7 @@ through `ros1_bridge`, same as before.
   with `ls /dev/video*` on the host.
 - **`/image_raw` rate at ~30 Hz with `--use_gpu false`**: your camera's
   libjpeg-turbo is faster than expected — feel free to leave it on CPU.
-- **`Invalid pipeline: no element "nvv4l2decoder"`**: DeepStream plugins
+- **`Invalid pipeline: no element "nvjpegdec"`**: DeepStream plugins
   not on `GST_PLUGIN_PATH`. The entrypoint sets `LD_LIBRARY_PATH` to
   include DeepStream's lib dir; verify with `gst-inspect-1.0
-  nvv4l2decoder` inside the container.
+  nvjpegdec` inside the container.

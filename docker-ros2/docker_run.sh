@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Launch the rslidar_sdk ROS 2 node + RViz2 against the AIRY at 192.168.0.200
-# (DGX Spark host is 192.168.0.199).
+# (host is 192.168.1.135).
 #   --net=host   : receive UDP from the LiDAR on host ports 6699/7788
 #   X11 forward  : RViz2 opens on your desktop
 set -e

@@ -21,8 +21,8 @@ each sensor to one scalar, and line up the turning points.
 
 - Base: **`rslidar-airy-calib`** (inherits ROS 2 Humble, rslidar_sdk, numpy/opencv/
   open3d/scipy). **Build that first:** `./docker-calib/docker_build.sh`.
-- Adds the **CUDA 13.0 toolkit + nvcc** (GB10 is sm_121 → needs CUDA 13.x) and
-  matplotlib. The driver is provided at runtime by `--gpus all`.
+- Adds the **CUDA 13.0 toolkit + nvcc** (x86_64; targets Turing sm_75 and newer)
+  and matplotlib. The driver is provided at runtime by `--gpus all`.
 
 ## Build
 
@@ -138,7 +138,7 @@ Everything is bind-mounted, so edit YAML/scripts and re-run without rebuilding.
 
 ```
 ./docker-custom/docker_run.sh -- bash -lc \
-  'nvcc --version && printf "%s" "__global__ void k(){} int main(){k<<<1,1>>>();return cudaDeviceSynchronize();}" > /tmp/t.cu && nvcc -arch=sm_121 /tmp/t.cu -o /tmp/t && /tmp/t && echo CUDA_OK'
+  'nvcc --version && printf "%s" "__global__ void k(){} int main(){k<<<1,1>>>();return cudaDeviceSynchronize();}" > /tmp/t.cu && nvcc /tmp/t.cu -o /tmp/t && /tmp/t && echo CUDA_OK'
 ```
 
 ## Troubleshooting

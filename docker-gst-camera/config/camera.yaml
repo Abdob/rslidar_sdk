@@ -6,7 +6,7 @@
     #
     # The launch file replaces `gscam_config` based on use_gpu:=true|false;
     # the value below is just a sane default if the launch arg isn't honored.
-    gscam_config: "v4l2src device=/dev/video0 ! image/jpeg,width=1280,height=720,framerate=30/1 ! nvv4l2decoder ! nvvideoconvert ! video/x-raw,format=RGB"
+    gscam_config: "v4l2src device=/dev/video0 ! image/jpeg,width=1280,height=720,framerate=30/1 ! nvjpegdec ! nvvideoconvert ! video/x-raw,format=RGB"
     image_encoding: "rgb8"
     frame_id: "camera"
     camera_name: "usb_cam"             # matches the name in intrinsics_ros.yaml

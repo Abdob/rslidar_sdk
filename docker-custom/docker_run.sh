@@ -12,7 +12,7 @@
 # YAML/Python and re-run without rebuilding. docker-calib/config is mounted
 # read-only for the camera intrinsics.
 #
-# --gpus all gives the container the GB10 (driver + CUDA). DISPLAY/X11 is for
+# --gpus all gives the container the GPU (driver + CUDA). DISPLAY/X11 is for
 # matplotlib's interactive window (CPU/X rendering -- it does NOT touch the
 # NVIDIA EGL path, so unlike the camera container it's safe here). Plot scripts
 # default to saving a PNG, so a display is optional.

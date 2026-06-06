@@ -3,7 +3,7 @@
 Launches gscam2 with one of two GStreamer pipelines:
 
   GPU (use_gpu:=true, default):
-    v4l2src -> mjpeg caps -> nvv4l2decoder (nvjpeg) -> nvvideoconvert -> BGR
+    v4l2src -> mjpeg caps -> nvjpegdec -> nvvideoconvert -> BGR
     Decode + convert run on the GPU. Final copy to system memory happens at
     gscam2's internal appsink. ~5% of frame time on the copy; the decode
     itself is essentially free.
@@ -39,11 +39,7 @@ _FPS_BRANCH = (
 GPU_PIPELINE = (
     "v4l2src device={device} ! "
     "image/jpeg,width={w},height={h},framerate={fps}/1 ! "
-    "nvv4l2decoder ! "                # HW MJPEG decode (negotiates image/jpeg via
-                                      # caps). The Spark/SBSA DeepStream has no
-                                      # nvjpegdec, and nvv4l2decoder here has no
-                                      # mjpeg property -- caps alone select JPEG.
-                                      # Output is NV12 in NVMM.
+    "nvjpegdec ! "                    # nvjpeg-backed MJPEG decode, output NVMM
     "nvvideoconvert ! "               # GPU NV12 → RGB, then transfer to system mem
     "video/x-raw,format=RGB ! "       # system memory (NVMM tag dropped) so
                                       # gscam2's appsink can consume it

@@ -16,10 +16,10 @@ HOST_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HOST_DIR/.." && pwd)"
 
 # Headless container: it only publishes /image_raw to ROS (fpsdisplaysink uses
-# fakesink). Deliberately NO DISPLAY / X11 mount -- on the DGX Spark, exposing an
-# X display routes nvvideoconvert's EGL init to Mesa's software Vulkan (ZINK),
-# which fails with VK_ERROR_INCOMPATIBLE_DRIVER and kills the pipeline (no
-# /image_raw). Without a display, EGL init no-ops and the GPU path runs fine.
+# fakesink), so no display is needed. Deliberately NO DISPLAY / X11 mount --
+# exposing an X display can route nvvideoconvert's EGL init to a software Vulkan
+# (ZINK) path that fails with VK_ERROR_INCOMPATIBLE_DRIVER and kills the pipeline
+# (no /image_raw). Without a display, EGL init no-ops and the GPU path runs fine.
 
 ARGS=("$@")
 case "${1:-}" in

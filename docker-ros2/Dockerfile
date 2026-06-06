@@ -1,7 +1,6 @@
-# Multi-arch base (has linux/arm64) so this builds/runs natively on the DGX
-# Spark (aarch64). osrf/ros:humble-desktop is amd64-only and won't run here.
-# ros:humble is ros-base, so we add rviz2 explicitly below for humble_start.py.
-FROM ros:humble
+# x86_64 (amd64) desktop ROS 2 Humble base. osrf/ros:humble-desktop bundles
+# rviz2, which humble_start.py launches.
+FROM osrf/ros:humble-desktop
 
 ENV DEBIAN_FRONTEND=noninteractive
 

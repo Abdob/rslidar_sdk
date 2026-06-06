@@ -1,7 +1,6 @@
-# Multi-arch base (has linux/arm64) so this builds/runs natively on the DGX
-# Spark (aarch64). osrf/ros:humble-desktop is amd64-only and won't run here.
-# ros:humble is ros-base, so we add rviz2 explicitly below for the calib launches.
-FROM ros:humble
+# x86_64 (amd64) desktop ROS 2 Humble base. osrf/ros:humble-desktop bundles
+# rviz2 and the GUI stack used by the colorize/extrinsic calib launches.
+FROM osrf/ros:humble-desktop
 
 ENV DEBIAN_FRONTEND=noninteractive
 
