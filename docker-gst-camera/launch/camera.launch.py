@@ -96,7 +96,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("use_gpu", default_value="true",
             description="true: nvjpegdec/nvvideoconvert; false: jpegdec/videoconvert"),
-        DeclareLaunchArgument("device", default_value="/dev/video0"),
+        DeclareLaunchArgument("device", default_value="/dev/video4"),
         DeclareLaunchArgument("width",  default_value="1280"),
         DeclareLaunchArgument("height", default_value="720"),
         DeclareLaunchArgument("fps",    default_value="30"),

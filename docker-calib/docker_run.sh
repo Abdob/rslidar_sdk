@@ -53,6 +53,7 @@ exec docker run --rm -it \
     --privileged \
     -e DISPLAY="${DISPLAY:-:0}" \
     -e XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}" \
+    -e LIBGL_ALWAYS_SOFTWARE=1 \
     -e NVIDIA_DRIVER_CAPABILITIES=all \
     -e NVIDIA_VISIBLE_DEVICES=all \
     --gpus all \

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Launch the rslidar_sdk ROS 2 node + RViz2 against the AIRY at 192.168.0.200
-# (host is 192.168.1.135).
+# (host is 192.168.0.199).
 #   --net=host   : receive UDP from the LiDAR on host ports 6699/7788
 #   X11 forward  : RViz2 opens on your desktop
 set -e
@@ -12,6 +12,7 @@ exec docker run --rm -it \
     --privileged \
     -e DISPLAY="${DISPLAY:-:0}" \
     -e XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}" \
+    -e LIBGL_ALWAYS_SOFTWARE=1 \
     -e NVIDIA_DRIVER_CAPABILITIES=all \
     -e NVIDIA_VISIBLE_DEVICES=all \
     --gpus all \
