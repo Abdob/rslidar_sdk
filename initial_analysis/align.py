@@ -189,12 +189,15 @@ def colorize_cloud(
     pts_xyz: np.ndarray,
     img_bgr,                    # cv2 BGR image
     calib: dict,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Project pts_xyz (lidar frame, (N,3)) into the camera image and sample
-    pixel colors.  Points outside the FOV fall back to jet depth coloring.
+    pixel colors.
 
-    Returns (N, 3) float64 RGB in [0, 1].
+    Returns
+    -------
+    colors  : (N, 3) float64 RGB in [0, 1]  (meaningful only where visible)
+    visible : (N,) bool mask — True for points that projected into the image
     """
     import cv2
 
@@ -202,15 +205,17 @@ def colorize_cloud(
     K, D = calib["K"], calib["D"]
     W, H = calib["sz"]
 
-    # Start with jet depth coloring for every point (fallback)
+    N       = len(pts_xyz)
+    colors  = np.zeros((N, 3), dtype=np.float64)
+    visible = np.zeros(N, dtype=bool)
+
     pts_cam_all = (R @ pts_xyz.T).T + t        # (N, 3) in camera frame
-    colors = _jet_rgb(np.linalg.norm(pts_cam_all, axis=1))
 
     # Keep only points in front of the camera
-    front = pts_cam_all[:, 2] > 0.1
+    front     = pts_cam_all[:, 2] > 0.1
     pts_cam_f = pts_cam_all[front]             # (M, 3)
     if len(pts_cam_f) == 0:
-        return colors
+        return colors, visible
 
     # Fisheye projection
     rvec = np.zeros((3, 1), np.float64)
@@ -228,12 +233,12 @@ def colorize_cloud(
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     sampled = img_rgb[vi[in_bounds], ui[in_bounds]].astype(np.float64) / 255.0
 
-    # Write camera colors over the fallback for visible points
-    front_idx  = np.where(front)[0]
+    front_idx   = np.where(front)[0]
     visible_idx = front_idx[in_bounds]
-    colors[visible_idx] = sampled
+    colors[visible_idx]  = sampled
+    visible[visible_idx] = True
 
-    return colors
+    return colors, visible
 
 
 def build_colored_map(
@@ -264,16 +269,19 @@ def build_colored_map(
         raw     = o3d.io.read_point_cloud(str(pcd_path))
         pts_xyz = np.asarray(raw.points, dtype=np.float64)
 
-        colors = colorize_cloud(pts_xyz, img_bgr, calib)        # lidar frame colors
+        colors, visible = colorize_cloud(pts_xyz, img_bgr, calib)
+
+        # Keep only points that projected into the image
+        pts_vis = pts_xyz[visible]
+        col_vis = colors[visible]
 
         cloud = o3d.geometry.PointCloud()
-        cloud.points = o3d.utility.Vector3dVector(pts_xyz)
-        cloud.colors = o3d.utility.Vector3dVector(colors)
+        cloud.points = o3d.utility.Vector3dVector(pts_vis)
+        cloud.colors = o3d.utility.Vector3dVector(col_vis)
         cloud.transform(T)                                       # → world frame
 
         merged += cloud
-        n_vis = int(np.any(colors != colors[0:1], axis=1).sum()) if len(colors) > 1 else 0
-        print(f"  [{i}] {pcd_path.name}  {len(pts_xyz):,} pts")
+        print(f"  [{i}] {pcd_path.name}  {visible.sum():,}/{len(pts_xyz):,} pts visible")
 
     merged = merged.voxel_down_sample(voxel_size * 0.25)
     return merged
