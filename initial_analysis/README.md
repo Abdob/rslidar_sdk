@@ -10,6 +10,7 @@ Scripts for analyzing captured LiDAR + camera data from a calibration session.
 | `compare_maps.py` | Overlay two PCD files for visual comparison (blue vs green) |
 | `filter_roi.py` | Crop a point cloud to a cuboid region of interest |
 | `analyze_room.py` | Segment room surfaces, measure distances, filter by depth, generate mesh |
+| `mesh_surfaces.py` | Piecewise-planar mesh with local plane fits per 20 cm tile; edge snapping |
 
 ---
 
@@ -376,6 +377,69 @@ inlier points projected onto the fitted plane.
 
 ---
 
+## mesh_surfaces.py — Piecewise-Planar Surface Mesh
+
+Builds a dense, photo-realistic mesh from a point cloud that contains one or
+more planar surfaces (walls, floor, ceiling).
+
+### Algorithm
+
+1. **Segment** — iterative RANSAC finds up to `--n-planes` planes; every point
+   is voted to its nearest plane, so slightly bent edges are handled correctly.
+2. **Local plane fit** — a regular grid (spacing `--tile-step`) is laid on each
+   global plane. Each grid vertex collects all points inside a
+   `--tile-size × --tile-size` window (overlapping) and fits a local plane by
+   least squares. The vertex 3D position is the local plane evaluated at the
+   grid point; its colour is the inverse-distance-weighted average of nearby
+   point colours (or a per-section index colour if the PCD has no stored colours).
+3. **Boundary snapping** — for every pair of adjacent sections the
+   plane-plane intersection line is computed. Grid vertices within
+   `--snap-thresh` of that line are projected onto it so adjacent section
+   meshes meet edge-to-edge without gaps.
+4. **Triangulate** — adjacent valid grid vertices are connected into quads
+   (two triangles); quads where any edge exceeds `--max-edge` are discarded
+   to avoid bridging across holes in the data.
+
+### Usage
+
+```bash
+python mesh_surfaces.py [input.pcd] [options]
+```
+
+```bash
+python mesh_surfaces.py                                       # default input
+python mesh_surfaces.py my_cloud.pcd -o my_mesh.ply
+python mesh_surfaces.py --tile-size 0.10 --tile-step 0.02    # finer mesh
+python mesh_surfaces.py --n-planes 1 --no-snap               # single surface, no snapping
+python mesh_surfaces.py --no-viz                             # headless / save only
+```
+
+| Argument | Default | Description |
+|---|---|---|
+| `input` | `filtered_ceiling.pcd` | Input point cloud |
+| `-o / --output` | `<input_dir>/surfaces_mesh.ply` | Output mesh |
+| `--tile-size M` | `0.20` | Side of the local fitting window in metres |
+| `--tile-step M` | `0.05` | Grid vertex spacing in metres (smaller = denser mesh) |
+| `--snap-thresh M` | `0.10` | Snap boundary vertices within this distance of an intersection line |
+| `--max-edge M` | `0.30` | Discard triangles with any edge longer than this |
+| `--n-planes N` | `5` | Max number of planes to detect |
+| `--dist-thresh M` | `0.02` | RANSAC inlier distance in metres |
+| `--no-snap` | off | Disable boundary snapping |
+| `--no-viz` | off | Skip the viewer |
+
+### Tuning tips
+
+| Scenario | Recommendation |
+|---|---|
+| Jagged/chunky mesh | Decrease `--tile-step` (e.g. `0.02`) |
+| Tiles with few points | Increase `--tile-size` (e.g. `0.30`) |
+| Gaps not closing at edges | Increase `--snap-thresh` (e.g. `0.20`) |
+| Long thin triangles at edges | Decrease `--snap-thresh` or `--max-edge` |
+| Only one surface in the file | `--n-planes 1` |
+| Noisy / bumpy source | Increase `--tile-size` to smooth more |
+
+---
+
 ## Output file reference
 
 | File | Created by | Content |
@@ -387,3 +451,4 @@ inlier points projected onto the fitted plane.
 | `segments.npz` | `analyze_room.py segment` | Plane models + labels |
 | `filtered_<surface>.pcd` | `analyze_room.py filter` | Depth-filtered cloud |
 | `room_mesh.ply` | `analyze_room.py mesh` | Five-surface flat mesh |
+| `surfaces_mesh.ply` | `mesh_surfaces.py` | Piecewise-planar dense mesh |
